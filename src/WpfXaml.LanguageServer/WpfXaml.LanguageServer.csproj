@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>WpfXaml.LanguageServer</RootNamespace>
+    <AssemblyName>wpf-xaml-ls</AssemblyName>
+    <RollForward>Major</RollForward>
+
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>wpf-xaml-ls</ToolCommandName>
+    <PackageId>WpfXaml.LanguageServer</PackageId>
+    <Description>Language server (LSP) for WPF XAML: completion, diagnostics, hover and go to definition in any editor.</Description>
+    <PackageTags>wpf;xaml;lsp;language-server</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WpfXaml.Analysis\WpfXaml.Analysis.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" />
+    <PackageReference Include="StreamJsonRpc" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WpfXaml.LanguageServer.Tests" />
+  </ItemGroup>
+
+</Project>

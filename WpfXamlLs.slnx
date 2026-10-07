@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WpfXaml.Analysis/WpfXaml.Analysis.csproj" />
+    <Project Path="src/WpfXaml.Language/WpfXaml.Language.csproj" />
+    <Project Path="src/WpfXaml.LanguageServer/WpfXaml.LanguageServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/WpfXaml.Analysis.Tests/WpfXaml.Analysis.Tests.csproj" />
+    <Project Path="tests/WpfXaml.Language.Tests/WpfXaml.Language.Tests.csproj" />
+    <Project Path="tests/WpfXaml.LanguageServer.Tests/WpfXaml.LanguageServer.Tests.csproj" />
+  </Folder>
+</Solution>

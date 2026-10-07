@@ -1,0 +1,3 @@
+﻿<Project>
+  <!-- Samples are standalone apps: don't inherit the repository build settings. -->
+</Project>

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>WpfXaml.Language</RootNamespace>
+    <Description>Error-tolerant XAML parser with exact source spans, including markup extensions.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WpfXaml.Language.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>WpfXaml.Analysis</RootNamespace>
+    <Description>WPF XAML semantic analysis on top of Roslyn compilations: type system, diagnostics, completion, hover, go to definition.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WpfXaml.Language\WpfXaml.Language.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WpfXaml.Analysis.Tests" />
+  </ItemGroup>
+
+</Project>
