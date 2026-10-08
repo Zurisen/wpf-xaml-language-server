@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -9,40 +9,77 @@ using WpfXaml.LanguageServer.Protocol;
 
 namespace WpfXaml.LanguageServer.Workspace;
 
+public enum XamlFileStatus
+{
+    /// <summary>The file is a Page/ApplicationDefinition item of a loaded project.</summary>
+    InProject,
+
+    /// <summary>The file sits in a loaded project's folder but the project excludes it from its build.</summary>
+    ExcludedFromProject,
+
+    /// <summary>The owning project is still loading; framework types are used meanwhile.</summary>
+    ProjectLoading,
+
+    /// <summary>No project owns the file; framework types are used.</summary>
+    NoProject,
+}
+
+/// <param name="Types">The type system to analyze the file with (null when no WPF targeting pack is available).</param>
+/// <param name="ProjectFilePath">The owning (or excluding) project, when known.</param>
+public sealed record XamlFileContext(XamlTypeSystem? Types, XamlFileStatus Status, string? ProjectFilePath);
+
 /// <summary>
-/// Supplies the <see cref="XamlTypeSystem"/> for a XAML file: from the owning C# project once the solution
-/// is loaded through MSBuildWorkspace, or from the framework reference assemblies until then (or when no
-/// project is found). C# files are tracked through file-change notifications, so project types stay current
-/// without a build.
+/// Supplies the <see cref="XamlTypeSystem"/> for a XAML file.
+/// <list type="bullet">
+/// <item>The solution (or projects) found under the workspace root loads in the background through MSBuildWorkspace.</item>
+/// <item>A XAML file's project is known exactly: the design-time build exposes each project's Page items
+/// (see WpfXamlLs.DesignTime.targets). Files whose nearest project isn't loaded yet trigger loading that project.</item>
+/// <item>Until a project is available, framework reference assemblies are used.</item>
+/// <item>Project references whose built DLL is up to date are read from the DLL instead of compiled from source.</item>
+/// <item>C# changes arrive as file notifications and are applied to the in-memory solution.</item>
+/// </list>
 /// </summary>
 public sealed class ProjectSystem : IDisposable
 {
+    private const string DesignTimeTargetsFile = "WpfXamlLs.DesignTime.targets";
     private static readonly string[] ProjectFileExtensions = [".sln", ".slnx", ".csproj", ".props", ".targets"];
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string?> NearestProjectCache = new(DocumentUris.PathComparer);
 
     private readonly ServerLog _log;
+    private readonly bool _loadOnDemand;
+    private readonly bool _waitForGenerators;
     private readonly Lazy<XamlTypeSystem?> _framework;
     private readonly ConditionalWeakTable<Compilation, XamlTypeSystem> _typeSystems = new();
     private readonly Lock _gate = new();
+    private readonly SemaphoreSlim _loadLock = new(1, 1);
 
+    // All guarded by _gate.
     private MSBuildWorkspace? _workspace;
-    private Solution? _solution;
+    private Solution? _loadedSolution;
+    private readonly Dictionary<string, SourceText?> _changedSources = new(DocumentUris.PathComparer);
+    private readonly HashSet<string> _onDemandProjects = new(DocumentUris.PathComparer);
+    private Snapshot? _snapshot;
     private IReadOnlyList<string> _loadTargets = [];
-    private CancellationTokenSource _loadCancellation = new();
+    private CancellationTokenSource _lifetime = new();
+    private int _pendingLoads;
+    private Task _loads = Task.CompletedTask;
 
-    public ProjectSystem(ServerLog log, int? frameworkVersion = null)
+    /// <param name="loadOnDemand">Load the project of an opened XAML file when it isn't in the loaded solution.</param>
+    /// <param name="waitForGenerators">Always use the complete compilation (for batch checks, where latency doesn't matter).</param>
+    public ProjectSystem(ServerLog log, int? frameworkVersion = null, bool loadOnDemand = true, bool waitForGenerators = false)
     {
         _log = log;
+        _loadOnDemand = loadOnDemand;
+        _waitForGenerators = waitForGenerators;
         _framework = new Lazy<XamlTypeSystem?>(() => CreateFrameworkTypeSystem(frameworkVersion));
     }
 
-    /// <summary>Raised after the solution (re)loads or C# sources change: diagnostics should be refreshed.</summary>
+    /// <summary>Raised after projects load or C# sources change: diagnostics should be refreshed.</summary>
     public event Action? Changed;
 
-    public bool IsLoading { get; private set; }
+    public bool IsLoading => Volatile.Read(ref _pendingLoads) > 0;
 
-    public Task LoadTask { get; private set; } = Task.CompletedTask;
-
-    /// <summary>Optional progress callbacks (begin, report, end) supplied by the server.</summary>
+    /// <summary>Optional progress reporting supplied by the server (dispose to end).</summary>
     public Func<string, IProgress<string>>? ProgressFactory { get; set; }
 
     /// <summary>Finds what to load: an explicit path, otherwise solutions or projects under the root.</summary>
@@ -76,50 +113,133 @@ public sealed class ProjectSystem : IDisposable
                 return projects;
             }
 
-            level = level.SelectMany(SafeGetDirectories).Where(d => !IsIgnoredDirectory(d)).ToList();
+            level = level.SelectMany(SafeGetDirectories).Where(d => !IsIgnoredDirectory(Path.GetFileName(d))).ToList();
         }
 
         return [];
     }
+
+    /// <summary>The project file in the nearest directory at or above the file (what owns it under SDK globbing).</summary>
+    public static string? FindNearestProjectFile(string filePath) =>
+        Path.GetDirectoryName(filePath) is { } directory ? NearestProjectInDirectory(directory) : null;
+
+    private static string? NearestProjectInDirectory(string directory) =>
+        NearestProjectCache.GetOrAdd(directory, static d =>
+        {
+            var projects = SafeGetFiles(d, "*.csproj");
+            if (projects.Length > 0)
+            {
+                return projects.Order(StringComparer.OrdinalIgnoreCase).First();
+            }
+
+            return Path.GetDirectoryName(d) is { } parent ? NearestProjectInDirectory(parent) : null;
+        });
 
     public void StartLoading(IReadOnlyList<string> targets)
     {
         _loadTargets = targets;
         if (targets.Count == 0)
         {
-            _log.Info("No solution or project found; using framework types only.");
+            _log.Info("No solution or project found under the root; projects will load when their XAML files are opened.");
             return;
         }
 
         Reload();
     }
 
-    /// <summary>The type system for a XAML file. Falls back to framework types while loading or when no project owns the file.</summary>
-    public async Task<XamlTypeSystem?> GetTypeSystemAsync(string? xamlPath, CancellationToken cancellationToken)
+    /// <summary>Completes when no project loads are pending.</summary>
+    public async Task WaitForLoadsAsync()
     {
-        Solution? solution;
-        lock (_gate)
+        while (true)
         {
-            solution = _solution;
-        }
-
-        if (solution is not null && xamlPath is not null && FindProject(solution, xamlPath) is { } project)
-        {
-            var compilation = await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
-            if (compilation is not null)
+            Task loads;
+            lock (_gate)
             {
-                return _typeSystems.GetValue(compilation, c => XamlTypeSystem.Create(c));
+                loads = _loads;
+            }
+
+            await loads.ConfigureAwait(false);
+            lock (_gate)
+            {
+                if (ReferenceEquals(loads, _loads) && _pendingLoads == 0)
+                {
+                    return;
+                }
             }
         }
-
-        return _framework.Value;
     }
+
+    public async Task<XamlFileContext> GetContextAsync(string? xamlPath, CancellationToken cancellationToken)
+    {
+        if (xamlPath is null)
+        {
+            return new XamlFileContext(_framework.Value, XamlFileStatus.NoProject, null);
+        }
+
+        var (project, status, projectFile) = ResolveOwner(xamlPath);
+        var types = project is null ? _framework.Value : await GetTypesAsync(project, cancellationToken).ConfigureAwait(false);
+        return new XamlFileContext(types, status, projectFile);
+    }
+
+    /// <summary>
+    /// Finds the project a XAML file belongs to without compiling anything; starts loading the owning project
+    /// when it isn't loaded yet.
+    /// </summary>
+    public XamlFileStatus EnsureOwnerLoading(string xamlPath) => ResolveOwner(xamlPath).Status;
+
+    private (Project? Project, XamlFileStatus Status, string? ProjectFile) ResolveOwner(string xamlPath)
+    {
+        var snapshot = GetSnapshot();
+        if (snapshot is not null && snapshot.XamlOwners.TryGetValue(xamlPath, out var ownerId))
+        {
+            var owner = snapshot.Effective.GetProject(ownerId)!;
+            return (owner, XamlFileStatus.InProject, owner.FilePath);
+        }
+
+        var projectFile = FindNearestProjectFile(xamlPath);
+        if (projectFile is not null && snapshot is not null && snapshot.ProjectsByPath.TryGetValue(projectFile, out var projectId))
+        {
+            // If the design-time build reported XAML items for this project, their absence means the project
+            // excludes this file. Projects without any (e.g. non-WPF, or the targets hook didn't run) fall back
+            // to directory ownership.
+            var status = snapshot.ProjectsWithXamlItems.Contains(projectId) ? XamlFileStatus.ExcludedFromProject : XamlFileStatus.InProject;
+            return (snapshot.Effective.GetProject(projectId), status, projectFile);
+        }
+
+        if (projectFile is not null && _loadOnDemand)
+        {
+            RequestProjectLoad(projectFile);
+            return (null, XamlFileStatus.ProjectLoading, projectFile);
+        }
+
+        return (null, IsLoading ? XamlFileStatus.ProjectLoading : XamlFileStatus.NoProject, projectFile);
+    }
+
+    public async Task<XamlTypeSystem?> GetTypeSystemAsync(string? xamlPath, CancellationToken cancellationToken) =>
+        (await GetContextAsync(xamlPath, cancellationToken).ConfigureAwait(false)).Types;
 
     /// <summary>Resolves a documentation comment id (from completion data) against the type system of a file.</summary>
     public async Task<ISymbol?> FindSymbolAsync(string? xamlPath, string symbolId, CancellationToken cancellationToken)
     {
         var types = await GetTypeSystemAsync(xamlPath, cancellationToken).ConfigureAwait(false);
         return types is null ? null : DocumentationCommentId.GetFirstSymbolForDeclarationId(symbolId, types.Compilation);
+    }
+
+    /// <summary>
+    /// For a symbol read from a built project assembly, the same symbol in that project's source
+    /// (so go to definition can land in the code). Null when the symbol is not from a loaded project.
+    /// </summary>
+    public async Task<ISymbol?> FindSourceSymbolAsync(ISymbol symbol, CancellationToken cancellationToken)
+    {
+        if (symbol.HasSourceLocation() || GetSnapshot() is not { } snapshot || symbol.ContainingAssembly is not { } assembly
+            || symbol.GetDocumentationCommentId() is not { } id)
+        {
+            return null;
+        }
+
+        var project = snapshot.Effective.Projects.FirstOrDefault(p => p.Language == LanguageNames.CSharp && p.AssemblyName == assembly.Name);
+        var compilation = project is null ? null : await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
+        return compilation is null ? null : DocumentationCommentId.GetFirstSymbolForDeclarationId(id, compilation);
     }
 
     public void OnFilesChanged(IReadOnlyList<(string Path, int Type)> changes)
@@ -131,100 +251,99 @@ public sealed class ProjectSystem : IDisposable
             return;
         }
 
-        var changed = false;
-        lock (_gate)
-        {
-            if (_solution is null)
-            {
-                return;
-            }
-
-            var solution = _solution;
-            foreach (var (path, type) in changes.Where(c => c.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)))
-            {
-                var ids = solution.GetDocumentIdsWithFilePath(path);
-                if (type == FileChangeType.Deleted)
-                {
-                    solution = solution.RemoveDocuments(ids);
-                    changed |= ids.Length > 0;
-                    continue;
-                }
-
-                if (TryReadText(path) is not { } text)
-                {
-                    continue;
-                }
-
-                if (ids.Length > 0)
-                {
-                    foreach (var id in ids)
-                    {
-                        solution = solution.WithDocumentText(id, text, PreservationMode.PreserveIdentity);
-                    }
-
-                    changed = true;
-                }
-                else if (!IsInIgnoredDirectory(path))
-                {
-                    foreach (var project in FindProjects(solution, path))
-                    {
-                        solution = project.AddDocument(Path.GetFileName(path), text, filePath: path).Project.Solution;
-                        changed = true;
-                    }
-                }
-            }
-
-            _solution = solution;
-        }
-
-        if (changed)
-        {
-            Changed?.Invoke();
-        }
-    }
-
-    public void Dispose()
-    {
-        _loadCancellation.Cancel();
-        _workspace?.Dispose();
-    }
-
-    private void Reload()
-    {
-        var targets = _loadTargets;
-        if (targets.Count == 0)
+        var sources = changes.Where(c => c.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && !IsInIgnoredDirectory(c.Path)).ToList();
+        if (sources.Count == 0)
         {
             return;
         }
 
+        lock (_gate)
+        {
+            foreach (var (path, type) in sources)
+            {
+                _changedSources[path] = type == FileChangeType.Deleted ? null : TryReadText(path);
+            }
+
+            _snapshot = null;
+        }
+
+        Changed?.Invoke();
+    }
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            _lifetime.Cancel();
+            _workspace?.Dispose();
+            _workspace = null;
+        }
+    }
+
+    // ------------------------------------------------------------------ loading
+
+    private void Reload()
+    {
+        NearestProjectCache.Clear();
+        lock (_gate)
+        {
+            _lifetime.Cancel();
+            _lifetime = new CancellationTokenSource();
+            _workspace?.Dispose();
+            _workspace = null;
+            _loadedSolution = null;
+            _changedSources.Clear();
+            _snapshot = null;
+        }
+
+        var targets = _loadTargets.Concat(_onDemandProjects).ToList();
+        if (targets.Count > 0)
+        {
+            EnqueueLoad(targets, "Loading projects");
+        }
+    }
+
+    private void RequestProjectLoad(string projectFile)
+    {
+        lock (_gate)
+        {
+            if (!_onDemandProjects.Add(projectFile))
+            {
+                return;
+            }
+        }
+
+        _log.Info($"Loading {Path.GetFileName(projectFile)} (owns an opened XAML file but isn't in the loaded solution).");
+        EnqueueLoad([projectFile], $"Loading {Path.GetFileNameWithoutExtension(projectFile)}");
+    }
+
+    private void EnqueueLoad(IReadOnlyList<string> targets, string title)
+    {
         CancellationToken token;
         lock (_gate)
         {
-            _loadCancellation.Cancel();
-            _loadCancellation = new CancellationTokenSource();
-            token = _loadCancellation.Token;
-            IsLoading = true;
+            token = _lifetime.Token;
+            _pendingLoads++;
+            var previous = _loads;
+            _loads = Task.Run(async () =>
+            {
+                await previous.ConfigureAwait(false);
+                await LoadAsync(targets, title, token).ConfigureAwait(false);
+            });
         }
-
-        LoadTask = Task.Run(() => LoadAsync(targets, token), token);
     }
 
-    private async Task LoadAsync(IReadOnlyList<string> targets, CancellationToken cancellationToken)
+    private async Task LoadAsync(IReadOnlyList<string> targets, string title, CancellationToken cancellationToken)
     {
-        var progress = ProgressFactory?.Invoke("Loading projects");
+        var progress = ProgressFactory?.Invoke(title);
         var stopwatch = Stopwatch.StartNew();
+        await _loadLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
-            // EnableWindowsTargeting lets net*-windows projects evaluate on Linux/macOS.
-            // NuGetAudit would query package feeds (often private and unauthenticated here) on every load.
-            var properties = new Dictionary<string, string>
-            {
-                ["EnableWindowsTargeting"] = "true",
-                ["NuGetAudit"] = "false",
-            };
-            var workspace = MSBuildWorkspace.Create(properties);
+            cancellationToken.ThrowIfCancellationRequested();
+            var workspace = GetOrCreateWorkspace();
             var loadMessages = 0;
-            workspace.RegisterWorkspaceFailedHandler(e =>
+            using var _ = workspace.RegisterWorkspaceFailedHandler(e =>
             {
                 // Mostly MSBuild warnings (package compatibility, architecture mismatch); projects still load.
                 Interlocked.Increment(ref loadMessages);
@@ -241,6 +360,12 @@ public sealed class ProjectSystem : IDisposable
 
             foreach (var target in targets)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (workspace.CurrentSolution.Projects.Any(p => string.Equals(p.FilePath, target, DocumentUris.PathComparison)))
+                {
+                    continue;
+                }
+
                 _log.Info($"Loading {target}");
                 if (target.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || target.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
                 {
@@ -252,61 +377,219 @@ public sealed class ProjectSystem : IDisposable
                 }
             }
 
-            MSBuildWorkspace? previous;
             lock (_gate)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                previous = _workspace;
-                _workspace = workspace;
-                _solution = workspace.CurrentSolution;
-                IsLoading = false;
+                _loadedSolution = workspace.CurrentSolution;
+                _snapshot = null;
             }
 
-            previous?.Dispose();
+            // Build the snapshot now (it checks every source file's timestamp) rather than on the first request.
+            GetSnapshot();
+
             var count = workspace.CurrentSolution.Projects.Count(p => p.Language == LanguageNames.CSharp);
             var messages = loadMessages > 0 ? $" ({loadMessages} MSBuild messages; --log-level debug shows them)" : string.Empty;
             _log.Info($"Loaded {count} C# projects in {stopwatch.Elapsed.TotalSeconds:F1}s{messages}.");
-            Changed?.Invoke();
         }
-        catch (OperationCanceledException)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
+            // Superseded by a reload (its workspace may already be disposed).
         }
         catch (Exception e)
         {
-            lock (_gate)
-            {
-                IsLoading = false;
-            }
-
-            _log.Error("Failed to load projects; using framework types only", e);
+            _log.Error($"Failed to load {string.Join(", ", targets.Select(Path.GetFileName))}; using framework types for its files", e);
         }
         finally
         {
+            _loadLock.Release();
+            lock (_gate)
+            {
+                _pendingLoads--;
+            }
+
             (progress as IDisposable)?.Dispose();
+        }
+
+        if (!cancellationToken.IsCancellationRequested)
+        {
+            Changed?.Invoke();
         }
     }
 
-    /// <summary>The C# project whose directory most specifically contains the file (XAML items are not Roslyn documents).</summary>
-    private static Project? FindProject(Solution solution, string filePath) => FindProjects(solution, filePath).FirstOrDefault();
-
-    private static IEnumerable<Project> FindProjects(Solution solution, string filePath)
+    private MSBuildWorkspace GetOrCreateWorkspace()
     {
-        var candidates = solution.Projects
-            .Where(p => p.Language == LanguageNames.CSharp && p.FilePath is not null)
-            .Select(p => (Project: p, Directory: Path.GetDirectoryName(p.FilePath!)! + Path.DirectorySeparatorChar))
-            .Where(p => filePath.StartsWith(p.Directory, DocumentUris.PathComparison))
-            .ToList();
-        if (candidates.Count == 0)
+        lock (_gate)
         {
-            return [];
+            if (_workspace is not null)
+            {
+                return _workspace;
+            }
+
+            // EnableWindowsTargeting lets net*-windows projects evaluate on Linux/macOS.
+            // NuGetAudit would query package feeds (often private and unauthenticated here) on every load.
+            var properties = new Dictionary<string, string>
+            {
+                ["EnableWindowsTargeting"] = "true",
+                ["NuGetAudit"] = "false",
+            };
+
+            var targets = Path.Combine(AppContext.BaseDirectory, DesignTimeTargetsFile);
+            if (File.Exists(targets))
+            {
+                properties["CustomAfterMicrosoftCommonTargets"] = targets;
+            }
+            else
+            {
+                _log.Warning($"{DesignTimeTargetsFile} not found next to the server; XAML file ownership falls back to directories.");
+            }
+
+            _workspace = MSBuildWorkspace.Create(properties);
+            return _workspace;
+        }
+    }
+
+    // ------------------------------------------------------------------ snapshots
+
+    /// <summary>The loaded solution plus C# changes, with ownership indexes and built-reference substitution.</summary>
+    private sealed class Snapshot
+    {
+        public required Solution Effective { get; init; }
+
+        public required Dictionary<string, ProjectId> XamlOwners { get; init; }
+
+        public required HashSet<ProjectId> ProjectsWithXamlItems { get; init; }
+
+        public required Dictionary<string, ProjectId> ProjectsByPath { get; init; }
+    }
+
+    private Snapshot? GetSnapshot()
+    {
+        lock (_gate)
+        {
+            if (_snapshot is not null || _loadedSolution is null)
+            {
+                return _snapshot;
+            }
+
+            var stopwatch = Stopwatch.StartNew();
+            var source = ApplySourceChanges(_loadedSolution);
+            var owners = new Dictionary<string, ProjectId>(DocumentUris.PathComparer);
+            var withXaml = new HashSet<ProjectId>();
+            var byPath = new Dictionary<string, ProjectId>(DocumentUris.PathComparer);
+
+            // Multi-targeted projects appear once per framework; the first (by name) wins consistently.
+            foreach (var project in source.Projects.Where(p => p.Language == LanguageNames.CSharp).OrderBy(p => p.Name, StringComparer.Ordinal))
+            {
+                if (project.FilePath is not null)
+                {
+                    byPath.TryAdd(project.FilePath, project.Id);
+                }
+
+                foreach (var document in project.AdditionalDocuments)
+                {
+                    if (document.FilePath is { } path && path.EndsWith(".xaml", StringComparison.OrdinalIgnoreCase))
+                    {
+                        owners.TryAdd(path, project.Id);
+                        withXaml.Add(project.Id);
+                    }
+                }
+            }
+
+            Snapshot? snapshot = null;
+            var effective = BuiltReferences.Substitute(source, id => snapshot?.Effective.GetProject(id)?.GetCompilationAsync().GetAwaiter().GetResult(), _log.Debug, out var built);
+            snapshot = new Snapshot { Effective = effective, XamlOwners = owners, ProjectsWithXamlItems = withXaml, ProjectsByPath = byPath };
+            _snapshot = snapshot;
+            _log.Debug($"Snapshot: {byPath.Count} projects, {owners.Count} XAML files, {built} built references ({stopwatch.ElapsedMilliseconds} ms).");
+            return snapshot;
+        }
+    }
+
+    /// <summary>Applies C# files changed on disk since the load (edited, created, deleted).</summary>
+    private Solution ApplySourceChanges(Solution solution)
+    {
+        foreach (var (path, text) in _changedSources)
+        {
+            var ids = solution.GetDocumentIdsWithFilePath(path);
+            if (text is null)
+            {
+                solution = solution.RemoveDocuments(ids);
+            }
+            else if (ids.Length > 0)
+            {
+                foreach (var id in ids)
+                {
+                    solution = solution.WithDocumentText(id, text, PreservationMode.PreserveIdentity);
+                }
+            }
+            else if (FindNearestProjectFile(path) is { } projectFile)
+            {
+                foreach (var project in solution.Projects.Where(p => string.Equals(p.FilePath, projectFile, DocumentUris.PathComparison)).ToList())
+                {
+                    solution = project.AddDocument(Path.GetFileName(path), text, filePath: path).Project.Solution;
+                }
+            }
         }
 
-        // Multi-targeted projects appear once per target framework; keep only the deepest directory, first framework.
-        var deepest = candidates.Max(c => c.Directory.Length);
-        return candidates
-            .Where(c => c.Directory.Length == deepest)
-            .GroupBy(c => c.Project.FilePath, DocumentUris.PathComparer)
-            .Select(g => g.OrderBy(c => c.Project.Name, StringComparer.Ordinal).First().Project);
+        return solution;
+    }
+
+    private async Task<XamlTypeSystem?> GetTypesAsync(Project project, CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var compilation = await GetCompilationAsync(project, cancellationToken).ConfigureAwait(false);
+        if (compilation is null)
+        {
+            return _framework.Value;
+        }
+
+        var compiled = stopwatch.Elapsed;
+        var types = _typeSystems.GetValue(compilation, c => XamlTypeSystem.Create(c));
+        if (stopwatch.ElapsedMilliseconds > 500)
+        {
+            _log.Debug($"Type system for {project.Name}: compilation {compiled.TotalMilliseconds:F0} ms, total {stopwatch.ElapsedMilliseconds} ms.");
+        }
+        if (types.GetNamespace(Language.Syntax.XmlNamespaces.WpfPresentation) is not null)
+        {
+            return types;
+        }
+
+        // Loaded, but without WPF references: not restored, or a legacy .NET Framework project whose
+        // reference assemblies aren't installed. Framework types (with silence about the rest) beat that.
+        if (project.FilePath is { } path && _projectsWithoutWpf.TryAdd(path, 0))
+        {
+            _log.Warning($"{Path.GetFileName(path)} has no WPF references after loading (not restored, or a .NET Framework project without reference assemblies); using framework types for its XAML.");
+        }
+
+        return _framework.Value;
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _projectsWithoutWpf = new(DocumentUris.PathComparer);
+    private readonly ConditionalWeakTable<Project, Task<Compilation?>> _fullCompilations = new();
+    private readonly ConditionalWeakTable<Project, Task<Compilation?>> _quickCompilations = new();
+
+    /// <summary>
+    /// The project's compilation. Running source generators is most of the cost of compiling a large project
+    /// (8 of 10 seconds on the motivating solution), and they rarely produce anything XAML refers to. So unless
+    /// <see cref="_waitForGenerators"/> is set, a generator-free compilation answers first, the full one runs in
+    /// the background, and <see cref="Changed"/> fires when it is ready so diagnostics are recomputed with it.
+    /// </summary>
+    private async Task<Compilation?> GetCompilationAsync(Project project, CancellationToken cancellationToken)
+    {
+        var full = _fullCompilations.GetValue(project, p => Task.Run(() => p.GetCompilationAsync(CancellationToken.None)));
+        if (full.IsCompletedSuccessfully || _waitForGenerators || !project.AnalyzerReferences.Any())
+        {
+            return await full.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var quick = _quickCompilations.GetValue(project, p =>
+        {
+            _ = full.ContinueWith(_ => Changed?.Invoke(), CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
+            return Task.Run(() => p.WithAnalyzerReferences([]).GetCompilationAsync(CancellationToken.None));
+        });
+
+        // Whichever is ready first: on small projects the full compilation can win.
+        await Task.WhenAny(full, quick).WaitAsync(cancellationToken).ConfigureAwait(false);
+        return full.IsCompletedSuccessfully ? full.Result : await quick.ConfigureAwait(false);
     }
 
     private XamlTypeSystem? CreateFrameworkTypeSystem(int? frameworkVersion)
@@ -335,8 +618,8 @@ public sealed class ProjectSystem : IDisposable
         }
     }
 
-    private static bool IsIgnoredDirectory(string directory) =>
-        Path.GetFileName(directory) is "bin" or "obj" or ".git" or ".vs" or "node_modules" or "packages" or "artifacts";
+    private static bool IsIgnoredDirectory(string name) =>
+        name is "bin" or "obj" or ".git" or ".vs" or "node_modules" or "packages" or "artifacts";
 
     private static bool IsInIgnoredDirectory(string path) =>
         path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Any(part => part is "bin" or "obj");

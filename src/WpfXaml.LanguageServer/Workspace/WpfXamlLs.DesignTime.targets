@@ -1,0 +1,14 @@
+<Project>
+  <!--
+    Imported (through CustomAfterMicrosoftCommonTargets) only into the design-time builds wpf-xaml-ls runs.
+    Exposes the XAML files each project compiles (WPF Page and ApplicationDefinition items, after all
+    globs, Remove and Link metadata are applied) as AdditionalFiles, which Roslyn's MSBuildWorkspace
+    reports per project. That is how the server knows exactly which project owns a XAML file, and which
+    XAML files a project excludes from its build.
+  -->
+  <Target Name="WpfXamlLsExposeXamlItems" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <AdditionalFiles Include="@(Page);@(ApplicationDefinition)" Exclude="@(AdditionalFiles)" />
+    </ItemGroup>
+  </Target>
+</Project>

@@ -30,4 +30,7 @@ public static class DiagnosticCodes
     public const string UnresolvedAssembly = "XLS1010";
     public const string UnknownDirective = "XLS1011";
     public const string PropertyElementOwnerMismatch = "XLS1012";
+
+    /// <summary>Informational: the file is excluded from its project's build, so semantic checks are skipped.</summary>
+    public const string ExcludedFromBuild = "XLS9001";
 }

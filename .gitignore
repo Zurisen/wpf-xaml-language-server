@@ -9,3 +9,7 @@ artifacts/
 TestResults/
 *.binlog
 *.nupkg
+
+# Some global gitignores exclude these; this repository tracks them.
+!docs/
+!.github/

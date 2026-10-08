@@ -36,10 +36,16 @@ Emacs, or from CI and AI agents.
   members) and from `{StaticResource}` to its `x:Key`.
 - **Project-aware:** loads your `.sln`, `.slnx` or `.csproj` with MSBuild, so it sees project types even before
   they are built. It needs no WPF runtime: it reads reference assemblies.
+  - It knows exactly which XAML files each project builds. Files excluded with `<Page Remove>` aren't reported.
+  - A project that isn't in the solution is loaded when you open one of its XAML files.
+  - Up-to-date project references are read from their built DLLs, for speed.
 - **`check` command:** prints diagnostics for a whole solution in MSBuild format, for CI or agents.
 
-Tested on a 117-project commercial solution with 719 XAML files. Projects load in about 30 s, and completion takes
-10–15 ms after warm-up.
+Tested on a 117-project commercial solution with 719 XAML files:
+
+- Projects load in about 25 s.
+- Opening a file in the largest project gives diagnostics in about 2.5 s.
+- Completion takes 10–15 ms after warm-up.
 
 ## Install
 
@@ -108,6 +114,7 @@ wpf-xaml-ls --help
 | XLS1010 | Unresolved namespace or assembly |
 | XLS1011 | Unknown or misplaced `x:` directive |
 | XLS1012 | Property element owner doesn't match its parent (warning) |
+| XLS9001 | File is excluded from its project's build; only syntax is checked (information) |
 
 ## Development
 
@@ -120,7 +127,8 @@ dotnet test --solution WpfXamlLs.slnx
 ```
 
 The tests use the WPF targeting pack installed with the .NET SDK. They are skipped where it is missing. The
-end-to-end test loads [samples/SampleWpfApp](samples/SampleWpfApp) through MSBuild (Windows only).
+end-to-end test builds [samples/](samples) and loads it through MSBuild over LSP (Windows only). It covers loading
+on demand, built references and excluded pages. CI runs on Windows and Ubuntu.
 
 | Project | Purpose |
 |---|---|

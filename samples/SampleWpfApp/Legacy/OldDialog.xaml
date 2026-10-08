@@ -1,0 +1,5 @@
+<!-- Excluded from the build by <Page Remove="Legacy\**" /> in SampleWpfApp.csproj; the server must not report errors here. -->
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:local="clr-namespace:SampleWpfApp">
+  <local:TypeThatNoLongerExists />
+</UserControl>

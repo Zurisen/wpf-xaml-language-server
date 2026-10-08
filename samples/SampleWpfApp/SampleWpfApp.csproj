@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Sample used by the end-to-end tests and for trying the server in an editor. Not part of WpfXamlLs.slnx. -->
   <PropertyGroup>
@@ -9,5 +9,14 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SampleWpfLib\SampleWpfLib.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Dead XAML kept on disk but not compiled. -->
+    <Page Remove="Legacy\**" />
+  </ItemGroup>
 
 </Project>

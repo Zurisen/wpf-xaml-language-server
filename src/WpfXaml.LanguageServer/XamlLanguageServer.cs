@@ -6,6 +6,7 @@ using Microsoft.VisualStudio.Threading;
 using StreamJsonRpc;
 using WpfXaml.Analysis.Features;
 using WpfXaml.Analysis.Features.Completion;
+using WpfXaml.Language;
 using WpfXaml.LanguageServer.Protocol;
 using WpfXaml.LanguageServer.Workspace;
 
@@ -81,7 +82,7 @@ public sealed class XamlLanguageServer : IDisposable
             : parameters.RootPath;
 
         _projects.Dispose();
-        _projects = new ProjectSystem(_log, _settings.FrameworkVersion) { ProgressFactory = CreateProgress };
+        _projects = new ProjectSystem(_log, _settings.FrameworkVersion, loadOnDemand: _settings.LoadProjects) { ProgressFactory = CreateProgress };
         _projects.Changed += RefreshAllDiagnostics;
         _log.ClientSink = ForwardLog;
         _log.Info($"wpf-xaml-ls {Version} starting; root: {_rootPath ?? "(none)"}");
@@ -242,9 +243,16 @@ public sealed class XamlLanguageServer : IDisposable
         }
 
         var offset = LspConverters.ToOffset(document.Syntax.Lines, parameters.Position);
-        return DefinitionService.GetDefinitions(document.GetSemanticModel(types), offset)
-            .Select(l => LspConverters.ToLocation(document.Uri, l))
-            .ToArray();
+        var model = document.GetSemanticModel(types);
+        var locations = DefinitionService.GetDefinitions(model, offset);
+        if (locations.Count == 0 && XamlTargetResolver.Resolve(model, offset)?.Symbol is { } symbol
+            && await _projects.FindSourceSymbolAsync(symbol, cancellationToken).ConfigureAwait(false) is { } sourceSymbol)
+        {
+            // The symbol came from a built project assembly; go to its source instead.
+            locations = DefinitionService.GetSourceLocations(sourceSymbol);
+        }
+
+        return locations.Select(l => LspConverters.ToLocation(document.Uri, l)).ToArray();
     }
 
     // ------------------------------------------------------------------ diagnostics
@@ -289,10 +297,24 @@ public sealed class XamlLanguageServer : IDisposable
 
     private async Task PublishDiagnosticsAsync(DocumentSnapshot document, CancellationToken cancellationToken)
     {
-        var types = await _projects.GetTypeSystemAsync(document.Path, cancellationToken).ConfigureAwait(false);
-        var diagnostics = types is null
-            ? document.Syntax.Diagnostics
-            : document.GetSemanticModel(types).GetDiagnostics(cancellationToken);
+        var context = await _projects.GetContextAsync(document.Path, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<XamlDiagnostic> diagnostics;
+        if (context.Status == XamlFileStatus.ExcludedFromProject)
+        {
+            // Not compiled by its project (e.g. <Page Remove="..."/>): semantic errors would be noise.
+            var note = new XamlDiagnostic(
+                DiagnosticCodes.ExcludedFromBuild,
+                $"This file is not part of the build of {Path.GetFileName(context.ProjectFilePath)}; only XML syntax is checked.",
+                document.Syntax.Root?.Name.Span ?? default,
+                XamlDiagnosticSeverity.Information);
+            diagnostics = [.. document.Syntax.Diagnostics, note];
+        }
+        else
+        {
+            diagnostics = context.Types is null
+                ? document.Syntax.Diagnostics
+                : document.GetSemanticModel(context.Types).GetDiagnostics(cancellationToken);
+        }
 
         cancellationToken.ThrowIfCancellationRequested();
         if (_documents.Get(document.Uri)?.Version != document.Version)

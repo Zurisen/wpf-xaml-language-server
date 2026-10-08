@@ -26,4 +26,8 @@
     <InternalsVisibleTo Include="WpfXaml.LanguageServer.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Workspace\WpfXamlLs.DesignTime.targets" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="WpfXamlLs.DesignTime.targets" />
+  </ItemGroup>
+
 </Project>

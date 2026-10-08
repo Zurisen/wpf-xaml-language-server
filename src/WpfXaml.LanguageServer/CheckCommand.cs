@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using WpfXaml.Analysis.Semantics;
 using WpfXaml.Language;
@@ -23,7 +23,7 @@ internal static class CheckCommand
             root = Path.GetDirectoryName(explicitFile)!;
         }
 
-        using var projects = new ProjectSystem(log);
+        using var projects = new ProjectSystem(log, loadOnDemand: !frameworkOnly, waitForGenerators: true);
         var stopwatch = Stopwatch.StartNew();
         if (!frameworkOnly)
         {
@@ -33,20 +33,39 @@ internal static class CheckCommand
             }
 
             projects.StartLoading(targets);
-            await projects.LoadTask;
+            await projects.WaitForLoadsAsync();
+        }
+
+        var files = EnumerateXamlFiles(root).ToList();
+        if (!frameworkOnly)
+        {
+            // Files whose project isn't in the solution trigger loading that project; let those finish first.
+            foreach (var path in files)
+            {
+                projects.EnsureOwnerLoading(path);
+            }
+
+            await projects.WaitForLoadsAsync();
         }
 
         var loadTime = stopwatch.Elapsed;
-        var files = EnumerateXamlFiles(root).ToList();
         var results = new ConcurrentBag<(string Path, XamlDocument Document, IReadOnlyList<XamlDiagnostic> Diagnostics)>();
+        var excluded = 0;
         stopwatch.Restart();
 
         await Parallel.ForEachAsync(files, async (path, cancellationToken) =>
         {
             var text = await File.ReadAllTextAsync(path, cancellationToken);
             var document = XamlDocument.Parse(text);
-            var types = await projects.GetTypeSystemAsync(path, cancellationToken);
-            var diagnostics = types is null ? document.Diagnostics : new XamlSemanticModel(document, types).GetDiagnostics(cancellationToken);
+            var context = await projects.GetContextAsync(path, cancellationToken);
+            if (context.Status == XamlFileStatus.ExcludedFromProject)
+            {
+                Interlocked.Increment(ref excluded);
+                results.Add((path, document, document.Diagnostics));
+                return;
+            }
+
+            var diagnostics = context.Types is null ? document.Diagnostics : new XamlSemanticModel(document, context.Types).GetDiagnostics(cancellationToken);
             results.Add((path, document, diagnostics));
         });
 
@@ -71,7 +90,8 @@ internal static class CheckCommand
         }
 
         Console.WriteLine();
-        Console.WriteLine($"{files.Count} XAML files, {errors} errors, {warnings} warnings. Load {loadTime.TotalSeconds:F1}s, analysis {stopwatch.Elapsed.TotalSeconds:F1}s.");
+        var excludedNote = excluded > 0 ? $" ({excluded} excluded from their project's build: syntax only)" : string.Empty;
+        Console.WriteLine($"{files.Count} XAML files{excludedNote}, {errors} errors, {warnings} warnings. Load {loadTime.TotalSeconds:F1}s, analysis {stopwatch.Elapsed.TotalSeconds:F1}s.");
         return errors > 0 ? 1 : 0;
     }
 
