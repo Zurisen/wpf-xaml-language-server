@@ -16,7 +16,7 @@
       <RowDefinition Height="Auto" />
       <RowDefinition />
     </Grid.RowDefinitions>
-    <TextBlock Text="{Binding Greeting}" FontWeight="Bold" />
+    <TextBlock Text="{Binding Greeting}" FontWeight="Bold" Foreground="{StaticResource LibAccentBrush}" Background="{StaticResource AccentBrush}" />
     <StackPanel Grid.Row="1" Orientation="Horizontal">
       <local:BadgeControl Count="3" />
       <lib:TagControl Content="New" IsHighlighted="True" />

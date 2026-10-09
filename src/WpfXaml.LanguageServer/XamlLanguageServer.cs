@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -29,6 +29,7 @@ public sealed class XamlLanguageServer : IDisposable
     private readonly JsonRpc _rpc;
     private readonly ServerLog _log;
     private readonly DocumentStore _documents = new();
+    private readonly ProjectResourceHost _resources;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _pendingDiagnostics = new(StringComparer.Ordinal);
     private readonly TaskCompletionSource _exit = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -43,6 +44,7 @@ public sealed class XamlLanguageServer : IDisposable
     {
         _log = log;
         _projects = new ProjectSystem(log);
+        _resources = new ProjectResourceHost(() => _projects, _documents);
         var formatter = new SystemTextJsonFormatter { JsonSerializerOptions = JsonOptions };
         _rpc = new JsonRpc(new HeaderDelimitedMessageHandler(output, input, formatter))
         {
@@ -83,7 +85,15 @@ public sealed class XamlLanguageServer : IDisposable
 
         _projects.Dispose();
         _projects = new ProjectSystem(_log, _settings.FrameworkVersion, loadOnDemand: _settings.LoadProjects) { ProgressFactory = CreateProgress };
-        _projects.Changed += RefreshAllDiagnostics;
+        _projects.Changed += () =>
+        {
+            // Project changes can change how resource URIs resolve.
+            _resources.Invalidate();
+            RefreshAllDiagnostics();
+
+            // Parsing every XAML file for the solution-wide key index is the slow part of resource checks; do it now.
+            _ = Task.Run(() => _resources.GetAllResourceKeys());
+        };
         _log.ClientSink = ForwardLog;
         _log.Info($"wpf-xaml-ls {Version} starting; root: {_rootPath ?? "(none)"}");
 
@@ -111,7 +121,7 @@ public sealed class XamlLanguageServer : IDisposable
 
         if (_watchedFilesDynamicRegistration)
         {
-            string[] globs = ["**/*.cs", "**/*.csproj", "**/*.props", "**/*.targets", "**/*.sln", "**/*.slnx"];
+            string[] globs = ["**/*.cs", "**/*.xaml", "**/*.csproj", "**/*.props", "**/*.targets", "**/*.sln", "**/*.slnx"];
             var registration = new Registration(
                 "wpf-xaml-ls-watch",
                 "workspace/didChangeWatchedFiles",
@@ -153,6 +163,10 @@ public sealed class XamlLanguageServer : IDisposable
         if (snapshot is not null)
         {
             ScheduleDiagnostics(snapshot, delayMilliseconds: 250);
+            if (snapshot.DefinesSharedResources)
+            {
+                OnSharedResourcesChanged(except: snapshot.Uri);
+            }
         }
     }
 
@@ -160,7 +174,13 @@ public sealed class XamlLanguageServer : IDisposable
     public void DidClose(DidCloseTextDocumentParams parameters)
     {
         var uri = parameters.TextDocument.Uri;
+        var closing = _documents.Get(uri);
         _documents.Close(uri);
+        if (closing?.DefinesSharedResources == true)
+        {
+            // Unsaved edits are gone; other files see the version on disk again.
+            OnSharedResourcesChanged(except: uri);
+        }
         if (_pendingDiagnostics.TryRemove(uri, out var pending))
         {
             pending.Cancel();
@@ -182,7 +202,22 @@ public sealed class XamlLanguageServer : IDisposable
             .Where(c => c.Path is not null)
             .Select(c => (c.Path!, c.Type))
             .ToList();
+        if (changes.Any(c => c.Item1.EndsWith(".xaml", StringComparison.OrdinalIgnoreCase)))
+        {
+            OnSharedResourcesChanged(except: null);
+        }
+
         _projects.OnFilesChanged(changes);
+    }
+
+    /// <summary>A dictionary or App.xaml changed: resource lookups elsewhere may now resolve differently.</summary>
+    private void OnSharedResourcesChanged(string? except)
+    {
+        _resources.Invalidate();
+        foreach (var document in _documents.All.Where(d => d.Uri != except))
+        {
+            ScheduleDiagnostics(document, delayMilliseconds: 500);
+        }
     }
 
     // ------------------------------------------------------------------ language features
@@ -202,7 +237,7 @@ public sealed class XamlLanguageServer : IDisposable
         }
 
         var lines = document.Syntax.Lines;
-        var list = CompletionService.GetCompletions(document.GetSemanticModel(types), LspConverters.ToOffset(lines, parameters.Position));
+        var list = CompletionService.GetCompletions(document.GetSemanticModel(types, _resources), LspConverters.ToOffset(lines, parameters.Position));
         return list is null ? null : LspConverters.ToCompletionList(document.Uri, lines, list, _snippetSupport);
     }
 
@@ -229,7 +264,7 @@ public sealed class XamlLanguageServer : IDisposable
         }
 
         var lines = document.Syntax.Lines;
-        var hover = HoverService.GetHover(document.GetSemanticModel(types), LspConverters.ToOffset(lines, parameters.Position));
+        var hover = HoverService.GetHover(document.GetSemanticModel(types, _resources), LspConverters.ToOffset(lines, parameters.Position));
         return hover is null ? null : new Hover(MarkupContent.Markdown(hover.Markdown), LspConverters.ToRange(lines, hover.Span));
     }
 
@@ -243,7 +278,7 @@ public sealed class XamlLanguageServer : IDisposable
         }
 
         var offset = LspConverters.ToOffset(document.Syntax.Lines, parameters.Position);
-        var model = document.GetSemanticModel(types);
+        var model = document.GetSemanticModel(types, _resources);
         var locations = DefinitionService.GetDefinitions(model, offset);
         if (locations.Count == 0 && XamlTargetResolver.Resolve(model, offset)?.Symbol is { } symbol
             && await _projects.FindSourceSymbolAsync(symbol, cancellationToken).ConfigureAwait(false) is { } sourceSymbol)
@@ -297,7 +332,9 @@ public sealed class XamlLanguageServer : IDisposable
 
     private async Task PublishDiagnosticsAsync(DocumentSnapshot document, CancellationToken cancellationToken)
     {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var context = await _projects.GetContextAsync(document.Path, cancellationToken).ConfigureAwait(false);
+        var contextTime = stopwatch.ElapsedMilliseconds;
         IReadOnlyList<XamlDiagnostic> diagnostics;
         if (context.Status == XamlFileStatus.ExcludedFromProject)
         {
@@ -313,9 +350,10 @@ public sealed class XamlLanguageServer : IDisposable
         {
             diagnostics = context.Types is null
                 ? document.Syntax.Diagnostics
-                : document.GetSemanticModel(context.Types).GetDiagnostics(cancellationToken);
+                : document.GetSemanticModel(context.Types, _resources).GetDiagnostics(cancellationToken);
         }
 
+        _log.Debug($"Diagnostics for {Path.GetFileName(document.Path)}: types {contextTime} ms, analysis {stopwatch.ElapsedMilliseconds - contextTime} ms, {diagnostics.Count} diagnostics.");
         cancellationToken.ThrowIfCancellationRequested();
         if (_documents.Get(document.Uri)?.Version != document.Version)
         {

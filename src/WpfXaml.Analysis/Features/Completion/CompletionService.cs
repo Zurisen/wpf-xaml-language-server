@@ -1,4 +1,4 @@
-﻿using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis;
 using WpfXaml.Analysis.Semantics;
 using WpfXaml.Analysis.TypeSystem;
 using WpfXaml.Language.Syntax;
@@ -514,7 +514,7 @@ public sealed class CompletionService
     {
         if (XamlTargetResolver.IsResourceExtension(_model, type) && (argument.IsPositional || argument.Name == "ResourceKey"))
         {
-            return ResourceKeyItems();
+            return ResourceKeyItems(scope);
         }
 
         if (argument.IsPositional)
@@ -535,7 +535,7 @@ public sealed class CompletionService
     {
         if (XamlTargetResolver.IsResourceExtension(_model, type))
         {
-            return ResourceKeyItems();
+            return ResourceKeyItems(scope);
         }
 
         var constructor = type.Symbol.InstanceConstructors
@@ -560,9 +560,11 @@ public sealed class CompletionService
         return ValueItems(parameterType).Select(i => i with { SortText = "0" + i.Label });
     }
 
-    private IEnumerable<XamlCompletionItem> ResourceKeyItems() =>
-        _model.GetResourceKeys()
-            .Select(k => k.Key)
-            .Distinct(StringComparer.Ordinal)
-            .Select(k => new XamlCompletionItem(k, XamlCompletionKind.ResourceKey) { SortText = "0" + k });
+    private IEnumerable<XamlCompletionItem> ResourceKeyItems(XamlElement scope) =>
+        _model.GetResourceScope(scope).AllDefinitions()
+            .Select(d => new XamlCompletionItem(d.Key, XamlCompletionKind.ResourceKey)
+            {
+                Detail = d.FilePath is null ? d.ElementName : $"{d.ElementName} ({Path.GetFileName(d.FilePath)})",
+                SortText = "0" + d.Key,
+            });
 }

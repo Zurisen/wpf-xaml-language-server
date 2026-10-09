@@ -1,4 +1,3 @@
-using Microsoft.CodeAnalysis;
 using WpfXaml.Analysis.Semantics;
 using WpfXaml.Language.Text;
 
@@ -32,27 +31,30 @@ public static class HoverService
             XamlTargetKind.ClassName => target.Symbol is { } cls
                 ? DocumentationFormatter.Hover(cls.ToDisplayString(DocumentationFormatter.FullTypeFormat), cls)
                 : $"Class `{target.Name}` (generated from this XAML)",
-            XamlTargetKind.ResourceReference or XamlTargetKind.ResourceKey => ResourceHover(model, target.Name ?? string.Empty),
+            XamlTargetKind.ResourceReference or XamlTargetKind.ResourceKey => ResourceHover(model, target),
             _ => null,
         };
 
         return markdown is null ? null : new XamlHover(markdown, target.Span);
     }
 
-    private static string ResourceHover(XamlSemanticModel model, string key)
+    private static string ResourceHover(XamlSemanticModel model, XamlTarget target)
     {
-        var definitions = model.GetResourceKeys().Where(k => k.Key == key).ToList();
+        var key = target.Name ?? string.Empty;
+        var scope = target.Element is { } element ? model.GetResourceScope(element) : null;
+        var definitions = scope?.Find(key) ?? [];
         if (definitions.Count == 0)
         {
-            return $"Resource `{key}` (not defined in this file)";
+            var reasons = scope?.IncompleteReasons.ToList() ?? [];
+            return reasons.Count == 0
+                ? $"Resource `{key}` (not found)"
+                : $"Resource `{key}` (not found in the dictionaries visible here; it may come from elsewhere: {string.Join("; ", reasons)})";
         }
 
         var lines = definitions.Select(d =>
         {
-            var element = d.Attribute.Element;
-            var type = model.GetElementInfo(element).Type?.Symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat) ?? element.Name.FullName;
-            var line = model.Document.Lines.GetPosition(d.Attribute.Span.Start).Line + 1;
-            return $"- `{type}` (line {line})";
+            var where = d.FilePath is null ? "this file" : $"`{Path.GetFileName(d.FilePath)}`";
+            return $"- `{d.ElementName}` in {where}, line {d.Start.Line + 1}";
         });
 
         return $"Resource `{key}`\n\n{string.Join('\n', lines)}";

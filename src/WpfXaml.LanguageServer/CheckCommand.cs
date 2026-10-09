@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using WpfXaml.Analysis.Semantics;
 using WpfXaml.Language;
@@ -48,6 +48,7 @@ internal static class CheckCommand
             await projects.WaitForLoadsAsync();
         }
 
+        var resources = new ProjectResourceHost(() => projects, documents: null);
         var loadTime = stopwatch.Elapsed;
         var results = new ConcurrentBag<(string Path, XamlDocument Document, IReadOnlyList<XamlDiagnostic> Diagnostics)>();
         var excluded = 0;
@@ -65,7 +66,7 @@ internal static class CheckCommand
                 return;
             }
 
-            var diagnostics = context.Types is null ? document.Diagnostics : new XamlSemanticModel(document, context.Types).GetDiagnostics(cancellationToken);
+            var diagnostics = context.Types is null ? document.Diagnostics : new XamlSemanticModel(document, context.Types, resources.CreateContext(path)).GetDiagnostics(cancellationToken);
             results.Add((path, document, diagnostics));
         });
 

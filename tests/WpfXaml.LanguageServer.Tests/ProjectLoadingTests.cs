@@ -47,6 +47,12 @@ public class ProjectLoadingTests
         var hover = await client.RequestAsync<Hover>("textDocument/hover", Request(uri, At("TagControl")));
         Assert.Contains("A rounded label for tagging items.", hover.Contents.Value);
 
+        // A resource merged into App.xaml from the library through a pack URI.
+        var resource = await client.RequestAsync<Location[]>("textDocument/definition", Request(uri, At("LibAccentBrush")));
+        Assert.EndsWith(Path.Combine("SampleWpfLib", "Themes", "LibResources.xaml"), DocumentUris.ToPath(Assert.Single(resource).Uri), StringComparison.OrdinalIgnoreCase);
+        var keys = await client.RequestAsync<CompletionList>("textDocument/completion", Request(uri, At("LibAccentBrush", 0)));
+        Assert.Contains(keys.Items, i => i.Label == "AccentBrush");
+
         // Hover on a project property shows its XML docs.
         var count = await client.RequestAsync<Hover>("textDocument/hover", Request(uri, At("Count=", 1)));
         Assert.Contains("The number shown in the badge.", count.Contents.Value);

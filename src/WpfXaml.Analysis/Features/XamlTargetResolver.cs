@@ -43,6 +43,9 @@ public sealed record XamlTarget(XamlTargetKind Kind, TextSpan Span)
 
     /// <summary>Resource key, handler name or class name, as written.</summary>
     public string? Name { get; init; }
+
+    /// <summary>The element the target is written on (the scope for resource lookups).</summary>
+    public XamlElement? Element { get; init; }
 }
 
 public static class XamlTargetResolver
@@ -130,7 +133,7 @@ public static class XamlTargetResolver
             return info.Directive?.Name switch
             {
                 "Class" => new XamlTarget(XamlTargetKind.ClassName, span) { Symbol = model.ClassSymbol, Name = value },
-                "Key" => new XamlTarget(XamlTargetKind.ResourceKey, span) { Name = value },
+                "Key" => new XamlTarget(XamlTargetKind.ResourceKey, span) { Name = value, Element = element },
                 _ => null,
             };
         }
@@ -220,7 +223,7 @@ public static class XamlTargetResolver
 
         if (IsResourceExtension(model, extensionType) && (argument.IsPositional || argument.Name == "ResourceKey"))
         {
-            return new XamlTarget(XamlTargetKind.ResourceReference, span) { Name = text };
+            return new XamlTarget(XamlTargetKind.ResourceReference, span) { Name = text, Element = scope };
         }
 
         if (argument.IsPositional)

@@ -19,11 +19,13 @@ public static class DefinitionService
 
         if (target.Kind is XamlTargetKind.ResourceReference or XamlTargetKind.ResourceKey)
         {
-            var lines = model.Document.Lines;
-            return model.GetResourceKeys()
-                .Where(k => k.Key == target.Name && k.Attribute.ValueSpan is not null)
-                .Select(k => k.Attribute.ValueSpan!.Value)
-                .Select(span => new XamlLocation(null, lines.GetPosition(span.Start), lines.GetPosition(span.End)))
+            if (target.Element is null || target.Name is null)
+            {
+                return [];
+            }
+
+            return model.GetResourceScope(target.Element).Find(target.Name)
+                .Select(d => new XamlLocation(d.FilePath, d.Start, d.End))
                 .ToList();
         }
 

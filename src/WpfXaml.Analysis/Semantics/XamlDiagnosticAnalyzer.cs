@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using WpfXaml.Analysis.Resources;
 using WpfXaml.Analysis.TypeSystem;
 using WpfXaml.Language;
 using WpfXaml.Language.Syntax;
@@ -78,7 +79,56 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
             return;
         }
 
+        if (member.Name == "Source" && member.Owner.Symbol.DerivesFrom(model.Types.Known.ResourceDictionary))
+        {
+            AnalyzeDictionarySource(value, span);
+            return;
+        }
+
         Add(ValueChecker.Check(member.ValueType, value, span));
+    }
+
+    private void AnalyzeDictionarySource(string source, TextSpan span)
+    {
+        if (model.ResolveResourceSource(source.Trim()) is { FilePath: { } path } && model.Resources!.Host.GetDocument(path) is null)
+        {
+            Add(new XamlDiagnostic(DiagnosticCodes.ResourceDictionaryNotFound,
+                $"The resource dictionary '{source.Trim()}' was not found (expected at {path}).", span, XamlDiagnosticSeverity.Warning));
+        }
+    }
+
+    private bool IsDeferredContent(XamlElement element) =>
+        (model.Document.Root is { } root && ResourceCollector.IsDictionaryElement(root))
+        || element.Ancestors().Any(a => !a.IsPropertyElement && model.GetElementInfo(a).Type?.IsTemplate == true);
+
+    /// <summary>
+    /// <c>{StaticResource Key}</c> with a key no dictionary in scope defines. Only reported when every dictionary in
+    /// scope could be read; DynamicResource is never reported, since its keys are often added at run time.
+    /// </summary>
+    private void AnalyzeStaticResource(XamlElement scope, MarkupExtensionSyntax extension)
+    {
+        var argument = extension.FindArgument("ResourceKey") ?? extension.PositionalArguments.FirstOrDefault();
+        if (argument is null || argument.Value.Extension is not null || argument.Value.Text.Trim() is not { Length: > 0 } key)
+        {
+            return;
+        }
+
+        var resources = model.GetResourceScope(scope);
+        if (resources.Find(key).Count > 0 || !resources.IsComplete)
+        {
+            return;
+        }
+
+        // Dictionary files and template content are resolved where they end up being used: a key defined by
+        // some consumer elsewhere in the solution may well be found at run time.
+        if (IsDeferredContent(scope) && model.Resources?.Host.GetAllResourceKeys() is { } allKeys && allKeys.Contains(key))
+        {
+            return;
+        }
+
+        var suggestion = NameSuggestions.Closest(key, resources.AllDefinitions().Select(d => d.Key));
+        Add(new XamlDiagnostic(DiagnosticCodes.ResourceNotFound,
+            $"The resource '{key}' was not found.{NameSuggestions.DidYouMean(suggestion)}", argument.Value.Span, XamlDiagnosticSeverity.Warning));
     }
 
     private void AnalyzeEventHandler(string value, TextSpan span)
@@ -117,6 +167,11 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
             if (type is null)
             {
                 continue;
+            }
+
+            if (type.Symbol.DerivesFrom(model.Types.Known.StaticResourceExtension))
+            {
+                AnalyzeStaticResource(scope, extension);
             }
 
             foreach (var argument in extension.Arguments)

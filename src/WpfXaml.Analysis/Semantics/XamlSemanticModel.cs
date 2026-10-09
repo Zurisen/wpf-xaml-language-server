@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.CodeAnalysis;
+using WpfXaml.Analysis.Resources;
 using WpfXaml.Analysis.TypeSystem;
 using WpfXaml.Language;
 using WpfXaml.Language.Syntax;
@@ -16,18 +17,68 @@ public sealed class XamlSemanticModel
     private readonly ConcurrentDictionary<XamlElement, ElementInfo> _elements = new();
     private readonly ConcurrentDictionary<XamlAttribute, AttributeInfo> _attributes = new();
     private readonly ConcurrentDictionary<XamlAttribute, MarkupExtensionParseResult> _markupExtensions = new();
+    private readonly ConcurrentDictionary<XamlElement, ResourceScope> _resourceScopes = new();
     private readonly Lazy<INamedTypeSymbol?> _classSymbol;
+    private readonly Lazy<ResourceScope> _applicationScope;
+    private readonly ResourceCollector _resourceCollector;
 
-    public XamlSemanticModel(XamlDocument document, XamlTypeSystem types)
+    /// <param name="resources">Access to other XAML files for resource lookup; without it only this document's resources are known.</param>
+    public XamlSemanticModel(XamlDocument document, XamlTypeSystem types, XamlResourceContext? resources = null)
     {
         Document = document;
         Types = types;
+        Resources = resources;
         _classSymbol = new Lazy<INamedTypeSymbol?>(FindClassSymbol);
+        _resourceCollector = new ResourceCollector(resources, document);
+        _applicationScope = new Lazy<ResourceScope>(() => new ResourceScope(_resourceCollector.FromApplications(), null));
     }
 
     public XamlDocument Document { get; }
 
     public XamlTypeSystem Types { get; }
+
+    public XamlResourceContext? Resources { get; }
+
+    /// <summary>
+    /// The resources visible at <paramref name="element"/>: its own and its ancestors' <c>Resources</c>
+    /// (dictionaries, merged dictionaries, <c>Source</c> files), then the application's.
+    /// </summary>
+    public ResourceScope GetResourceScope(XamlElement element) =>
+        _resourceScopes.TryGetValue(element, out var cached) ? cached : _resourceScopes.GetOrAdd(element, CreateResourceScope);
+
+    /// <summary>Where a ResourceDictionary <c>Source</c> in this document points; null without a resource host.</summary>
+    public ResourceSourceResolution? ResolveResourceSource(string source) => _resourceCollector.Resolve(source, Resources?.FilePath);
+
+    private ResourceScope CreateResourceScope(XamlElement element)
+    {
+        var parent = element.Parent is { } p ? GetResourceScope(p) : _applicationScope.Value;
+        if (element.IsPropertyElement)
+        {
+            return parent;
+        }
+
+        var local = new ResourceTable();
+        var visiting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (Resources?.FilePath is { } path)
+        {
+            visiting.Add(path);
+        }
+
+        if (ResourceCollector.IsDictionaryElement(element))
+        {
+            local.Merge(_resourceCollector.FromDictionary(element, Document, Resources?.FilePath, visiting));
+        }
+
+        foreach (var child in element.ChildElements)
+        {
+            if (child.IsPropertyElement && child.Name.MemberName == "Resources")
+            {
+                local.Merge(_resourceCollector.FromResourcesProperty(child, Document, Resources?.FilePath, visiting));
+            }
+        }
+
+        return local.IsEmpty ? parent : new ResourceScope(local, parent);
+    }
 
     /// <summary>The code-behind class named by <c>x:Class</c> on the root, if it exists in the compilation.</summary>
     public INamedTypeSymbol? ClassSymbol => _classSymbol.Value;
@@ -199,27 +250,6 @@ public sealed class XamlSemanticModel
         }
 
         return null;
-    }
-
-    /// <summary>All <c>x:Key</c> declarations in the document.</summary>
-    public IEnumerable<(string Key, XamlAttribute Attribute)> GetResourceKeys()
-    {
-        if (Document.Root is null)
-        {
-            yield break;
-        }
-
-        foreach (var element in Document.Root.DescendantsAndSelf())
-        {
-            foreach (var attribute in element.Attributes)
-            {
-                if (attribute.Name.LocalName == "Key" && attribute.Name.Prefix is not null
-                    && IsXamlLanguageNamespace(element, attribute.Name.Prefix) && attribute.Value is { Length: > 0 } key)
-                {
-                    yield return (key, attribute);
-                }
-            }
-        }
     }
 
     public IReadOnlyList<XamlDiagnostic> GetDiagnostics(CancellationToken cancellationToken = default) =>

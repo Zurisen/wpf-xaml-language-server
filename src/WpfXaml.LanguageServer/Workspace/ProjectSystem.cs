@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -225,6 +225,74 @@ public sealed class ProjectSystem : IDisposable
         return types is null ? null : DocumentationCommentId.GetFirstSymbolForDeclarationId(symbolId, types.Compilation);
     }
 
+    // ------------------------------------------------------------------ resource lookup support
+
+    /// <summary>Every XAML file built by a loaded project.</summary>
+    public IReadOnlyCollection<string> GetAllXamlFiles() => GetSnapshot()?.XamlOwners.Keys ?? (IReadOnlyCollection<string>)[];
+    /// <summary>The directory of the project that owns (or excludes) a file.</summary>
+    public string? GetProjectDirectory(string filePath) =>
+        ResolveOwner(filePath).ProjectFile is { } projectFile ? Path.GetDirectoryName(projectFile) : null;
+
+    /// <summary>The directory of the loaded project producing an assembly (for <c>/Assembly;component/...</c> URIs).</summary>
+    public string? FindProjectDirectoryByAssemblyName(string assemblyName)
+    {
+        var project = GetSnapshot()?.Source.Projects.FirstOrDefault(p =>
+            p.Language == LanguageNames.CSharp && string.Equals(p.AssemblyName, assemblyName, StringComparison.OrdinalIgnoreCase));
+        return project?.FilePath is { } path ? Path.GetDirectoryName(path) : null;
+    }
+
+    /// <summary>
+    /// The App.xaml files whose resources a file can see: its own project's, or for a library, those of every
+    /// application project that references it. Null when unknown (no project, or no application references it).
+    /// </summary>
+    public IReadOnlyList<string>? GetApplicationDefinitions(string filePath)
+    {
+        if (GetSnapshot() is not { } snapshot || ResolveOwner(filePath) is not { Project: { } owner })
+        {
+            return null;
+        }
+
+        if (FindApplicationXaml(snapshot, owner) is { } own)
+        {
+            return [own];
+        }
+
+        var applications = snapshot.Source.GetProjectDependencyGraph()
+            .GetProjectsThatTransitivelyDependOnThisProject(owner.Id)
+            .Select(id => snapshot.Source.GetProject(id))
+            .OfType<Project>()
+            .Select(p => FindApplicationXaml(snapshot, p))
+            .OfType<string>()
+            .Distinct(DocumentUris.PathComparer)
+            .ToList();
+        return applications.Count > 0 ? applications : null;
+    }
+
+    private static string? FindApplicationXaml(Snapshot snapshot, Project project) =>
+        project.FilePath is null ? null : snapshot.ApplicationXaml.GetOrAdd(project.FilePath, _ =>
+            snapshot.XamlOwners
+                .Where(o => snapshot.Source.GetProject(o.Value)?.FilePath is { } owner && string.Equals(owner, project.FilePath, DocumentUris.PathComparison))
+                .Select(o => o.Key)
+                .OrderBy(p => p, DocumentUris.PathComparer)
+                .FirstOrDefault(p => ReadRootElementName(p) == "Application"));
+
+    /// <summary>The local name of a XAML file's root element, read from the start of the file.</summary>
+    private static string? ReadRootElementName(string path)
+    {
+        try
+        {
+            using var reader = new StreamReader(path);
+            var buffer = new char[4096];
+            var length = reader.ReadBlock(buffer, 0, buffer.Length);
+            var match = System.Text.RegularExpressions.Regex.Match(
+                new string(buffer, 0, length), @"^\s*(?:(?:<\?.*?\?>|<!--.*?-->)\s*)*<(?:[\w.-]+:)?([\w.-]+)", System.Text.RegularExpressions.RegexOptions.Singleline);
+            return match.Success ? match.Groups[1].Value : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
     /// <summary>
     /// For a symbol read from a built project assembly, the same symbol in that project's source
     /// (so go to definition can land in the code). Null when the symbol is not from a loaded project.
@@ -453,7 +521,13 @@ public sealed class ProjectSystem : IDisposable
     /// <summary>The loaded solution plus C# changes, with ownership indexes and built-reference substitution.</summary>
     private sealed class Snapshot
     {
+        /// <summary>The loaded solution plus C# changes, with project references intact (for dependency queries).</summary>
+        public required Solution Source { get; init; }
+
         public required Solution Effective { get; init; }
+
+        /// <summary>Project file → its App.xaml (null when it has none). Filled lazily.</summary>
+        public System.Collections.Concurrent.ConcurrentDictionary<string, string?> ApplicationXaml { get; } = new(DocumentUris.PathComparer);
 
         public required Dictionary<string, ProjectId> XamlOwners { get; init; }
 
@@ -497,7 +571,7 @@ public sealed class ProjectSystem : IDisposable
 
             Snapshot? snapshot = null;
             var effective = BuiltReferences.Substitute(source, id => snapshot?.Effective.GetProject(id)?.GetCompilationAsync().GetAwaiter().GetResult(), _log.Debug, out var built);
-            snapshot = new Snapshot { Effective = effective, XamlOwners = owners, ProjectsWithXamlItems = withXaml, ProjectsByPath = byPath };
+            snapshot = new Snapshot { Source = source, Effective = effective, XamlOwners = owners, ProjectsWithXamlItems = withXaml, ProjectsByPath = byPath };
             _snapshot = snapshot;
             _log.Debug($"Snapshot: {byPath.Count} projects, {owners.Count} XAML files, {built} built references ({stopwatch.ElapsedMilliseconds} ms).");
             return snapshot;

@@ -30,10 +30,17 @@ Emacs, or from CI and AI agents.
   - `StaticResource` keys;
   - closing tags;
   - `xmlns` URIs.
+- **Resources:**
+  - `StaticResource` and `DynamicResource` keys resolve through the element tree, `ResourceDictionary` and
+    `MergedDictionaries`, then `App.xaml`, including `Source` files in other projects (relative, `/Folder/…`,
+    `pack://application:,,,/Assembly;component/…`).
+  - Completion lists every key in scope, and go to definition and hover work across files.
+  - Warnings for missing `StaticResource` keys and for missing dictionary `Source` files. A warning is only given
+    when every dictionary in scope could be read.
 - **Hover:** signatures and XML documentation for types, properties, attached properties, events, enum values,
   directives and resource keys.
 - **Go to definition:** from XAML into C# (project types, properties, event handlers, `x:Class`, `x:Static`
-  members) and from `{StaticResource}` to its `x:Key`.
+  members) and from `{StaticResource}` to its `x:Key`, in whichever file defines it.
 - **Project-aware:** loads your `.sln`, `.slnx` or `.csproj` with MSBuild, so it sees project types even before
   they are built. It needs no WPF runtime: it reads reference assemblies.
   - It knows exactly which XAML files each project builds. Files excluded with `<Page Remove>` aren't reported.
@@ -114,6 +121,8 @@ wpf-xaml-ls --help
 | XLS1010 | Unresolved namespace or assembly |
 | XLS1011 | Unknown or misplaced `x:` directive |
 | XLS1012 | Property element owner doesn't match its parent (warning) |
+| XLS1013 | Resource dictionary `Source` file not found (warning) |
+| XLS1014 | `StaticResource` key not found (warning) |
 | XLS9001 | File is excluded from its project's build; only syntax is checked (information) |
 
 ## Development

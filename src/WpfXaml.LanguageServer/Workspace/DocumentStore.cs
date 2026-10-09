@@ -11,7 +11,7 @@ namespace WpfXaml.LanguageServer.Workspace;
 public sealed class DocumentSnapshot
 {
     private readonly Lazy<XamlDocument> _syntax;
-    private (XamlTypeSystem Types, XamlSemanticModel Model)? _semantic;
+    private (XamlTypeSystem Types, int ResourceVersion, XamlSemanticModel Model)? _semantic;
 
     public DocumentSnapshot(string uri, int version, string text)
     {
@@ -32,18 +32,24 @@ public sealed class DocumentSnapshot
 
     public XamlDocument Syntax => _syntax.Value;
 
-    public XamlSemanticModel GetSemanticModel(XamlTypeSystem types)
+    /// <summary>The model for this text, type system and state of the other XAML files (resource version).</summary>
+    internal XamlSemanticModel GetSemanticModel(XamlTypeSystem types, ProjectResourceHost resources)
     {
+        var version = resources.Version;
         var cached = _semantic;
-        if (cached is { } c && ReferenceEquals(c.Types, types))
+        if (cached is { } c && ReferenceEquals(c.Types, types) && c.ResourceVersion == version)
         {
             return c.Model;
         }
 
-        var model = new XamlSemanticModel(Syntax, types);
-        _semantic = (types, model);
+        var model = new XamlSemanticModel(Syntax, types, resources.CreateContext(Path));
+        _semantic = (types, version, model);
         return model;
     }
+
+    /// <summary>Resource dictionaries and App.xaml affect how other files resolve resources.</summary>
+    public bool DefinesSharedResources => Syntax.Root?.Name.LocalName is { } root
+        && (root == "Application" || root.EndsWith("Dictionary", StringComparison.Ordinal));
 }
 
 public sealed class DocumentStore
@@ -53,6 +59,9 @@ public sealed class DocumentStore
     public IEnumerable<DocumentSnapshot> All => _documents.Values;
 
     public DocumentSnapshot? Get(string uri) => _documents.GetValueOrDefault(uri);
+
+    public DocumentSnapshot? FindByPath(string path) =>
+        _documents.Values.FirstOrDefault(d => d.Path is not null && DocumentUris.PathComparer.Equals(d.Path, path));
 
     public DocumentSnapshot Open(string uri, int version, string text) => _documents[uri] = new DocumentSnapshot(uri, version, text);
 

@@ -3,6 +3,11 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              StartupUri="MainWindow.xaml">
   <Application.Resources>
-    <SolidColorBrush x:Key="AccentBrush" Color="SteelBlue" />
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="pack://application:,,,/SampleWpfLib;component/Themes/LibResources.xaml" />
+      </ResourceDictionary.MergedDictionaries>
+      <SolidColorBrush x:Key="AccentBrush" Color="SteelBlue" />
+    </ResourceDictionary>
   </Application.Resources>
 </Application>

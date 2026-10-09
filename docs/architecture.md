@@ -51,6 +51,32 @@ the analysis reusable from other hosts, such as an MCP server for AI agents or a
   help AI agents in particular.
 - Hover and go to definition share one resolver (`XamlTargetResolver`) that answers "what is under the caret".
 
+### Resources (`WpfXaml.Analysis.Resources`)
+
+- `XamlSemanticModel.GetResourceScope(element)` is a chain of scopes:
+  - the element's and its ancestors' `Resources`, with `ResourceDictionary` content, `MergedDictionaries` and
+    `Source` files followed recursively and guarded against cycles;
+  - then the application's resources.
+  Lookups return the innermost definition, like WPF.
+- Other files are read syntactically. They never need a type system, so cross-file lookups stay cheap.
+- The analysis reaches files and URIs only through `IXamlResourceHost`. The server's implementation:
+  - serves open editor buffers before disk;
+  - resolves relative, rooted, `pack://application:,,,/` and `/Assembly;component/` URIs through the loaded projects;
+  - finds the application resources: the project's `App.xaml`, or for a library, the `App.xaml` of every application
+    that references it.
+- **Two rules match how WPF actually behaves:**
+  - A lone `ResourceDictionary` inside `X.Resources` is the dictionary itself, even if it has an `x:Key`.
+  - Dictionary files and template content are resolved where they end up being used. A key that is out of scope
+    there, but defined by some other file in the solution, is not reported.
+- **When a scope is incomplete, missing keys are not reported.** A scope is incomplete when something in it can't
+  be read:
+  - a dictionary from an assembly outside the solution;
+  - a `ResourceDictionary` subclass without a `Source`, which may add resources in code;
+  - no known application.
+  `DynamicResource` is never reported, because its keys are often added at run time.
+- Calibration on the motivating solution (719 files): 4 warnings remain. Two are keys defined nowhere in the
+  codebase; two are keys in a window style that can only resolve from an unrelated dictionary.
+
 ## Decisions
 
 ### 1. Roslyn compilations, not a lightweight metadata reader
@@ -126,8 +152,8 @@ silent when the context is unknown.
 
 - **Rebuild detection.** A rebuild that makes a DLL up to date again is noticed when the next `.cs` or project
   change invalidates the snapshot, not immediately. Watching output assemblies would fix that.
-- **Resources.** Resolve keys across `App.xaml`, `MergedDictionaries`, themes and pack URIs, and warn on missing
-  keys.
+- **More resource keys.** Non-string keys (`{x:Type …}` implicit styles, `ComponentResourceKey`) and theme
+  dictionaries (`Themes/Generic.xaml`) are not modelled yet. References that use them are never reported.
 - **Bindings.** See decision 4.
 - **Code actions.** Generate an event handler, add a missing `xmlns`.
 - **Rename and find references** for `x:Name` and resource keys.
