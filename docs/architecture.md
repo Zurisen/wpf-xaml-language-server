@@ -109,10 +109,36 @@ Avalonia's completion engine and XamlX target other dialects and their own metad
 over Roslyn symbols turned out small. The Avalonia design (namespace mapping, completion contexts) was the
 reference.
 
-### 4. Bindings and `DataContext` (not implemented yet)
+### 4. Bindings: report only what the XAML declares, and only certain misses
 
-The plan is opt-in: resolve `Path` against `d:DataContext`, `DataTemplate DataType`, or `x:DataType`, and stay
-silent when the context is unknown.
+`BindingResolver` (`WpfXaml.Analysis.Bindings`) infers an element's data context from the nearest declaration:
+
+- `DataContext` (a binding, a resource, `x:Static`), `<X.DataContext>`, or `d:DataContext`;
+- for a `DataTemplate`: the `ItemsSource` item type when it is an `ItemTemplate`, otherwise `DataType`;
+- otherwise the parent's.
+
+It stops (unknown) at resources, control templates and styles, whose data context is decided where they are
+applied. Binding sources also include `ElementName`, `RelativeSource` and `Source`. Paths are resolved segment by
+segment, including indexers, `(Owner.Attached)` and `/`. Resolution stops silently at `object`, dynamic and
+custom-type-descriptor types.
+
+A missing property is only reported when the run-time object can't have it. Every source has a confidence level:
+
+| Confidence | Sources | When a missing property is reported |
+|---|---|---|
+| Exact | named elements, the `x:Class` type for the root, resource elements, `<X.DataContext>` | always |
+| Lower bound | `d:DataContext`, implicit `DataType`, `AncestorType`, `x:Static`, declared property types along a path, item types | if no known subclass declares the property; framework types and interfaces only if sealed |
+| Hint | `DataType` of keyed or explicitly assigned templates (WPF doesn't enforce it there) | never; used only for completion and hover |
+
+Two more precautions:
+
+- Static properties and dependency properties without a CLR wrapper count as present, because WPF resolves both.
+- Binding warnings wait for the compilation with source generators, so `[ObservableProperty]` members aren't
+  missed.
+
+Calibration on the motivating solution: the first version reported 691 binding warnings. After the rules above, 40
+remain. They are bindings to properties that no C# in the solution declares, members missing from controls (for
+example `IsChecked` on a MahApps 2 `ToggleSwitch`, which is `IsOn` now), and stale `d:DataContext` declarations.
 
 ### Project system
 
@@ -154,7 +180,11 @@ silent when the context is unknown.
   change invalidates the snapshot, not immediately. Watching output assemblies would fix that.
 - **More resource keys.** Non-string keys (`{x:Type …}` implicit styles, `ComponentResourceKey`) and theme
   dictionaries (`Themes/Generic.xaml`) are not modelled yet. References that use them are never reported.
-- **Bindings.** See decision 4.
+- **Bindings.** Not handled yet:
+  - bindings written as elements (`<Binding Path="…"/>` inside `MultiBinding`);
+  - `RelativeSource={x:Static RelativeSource.Self}`;
+  - converters and value-type checks;
+  - binding to a `DataTemplateSelector`'s templates.
 - **Code actions.** Generate an event handler, add a missing `xmlns`.
 - **Rename and find references** for `x:Name` and resource keys.
 - **Generated code.** Feed the `x:Name` fields and `InitializeComponent` (normally in `.g.cs`) to the C# side.

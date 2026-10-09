@@ -15,10 +15,11 @@ public sealed class XamlTypeSystem
     private readonly ConcurrentDictionary<string, NamespaceResolution> _namespaces = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<INamedTypeSymbol, XamlTypeInfo> _types = new(SymbolEqualityComparer.Default);
 
-    private XamlTypeSystem(Compilation compilation, bool isFrameworkOnly)
+    private XamlTypeSystem(Compilation compilation, bool isFrameworkOnly, bool hasGeneratedCode)
     {
         Compilation = compilation;
         IsFrameworkOnly = isFrameworkOnly;
+        HasGeneratedCode = hasGeneratedCode;
         Known = new WellKnownTypes(compilation);
         (_xmlnsDefinitions, _preferredPrefixes) = ReadXmlnsAttributes();
     }
@@ -35,7 +36,14 @@ public sealed class XamlTypeSystem
 
     public IReadOnlyCollection<string> XmlnsDefinitionUris => _xmlnsDefinitions.Keys;
 
-    public static XamlTypeSystem Create(Compilation compilation, bool isFrameworkOnly = false) => new(compilation, isFrameworkOnly);
+    /// <summary>
+    /// False when the compilation was created without running source generators (a fast first pass). Members
+    /// generators add (e.g. [ObservableProperty]) are then missing, so checks that depend on them stay silent.
+    /// </summary>
+    public bool HasGeneratedCode { get; }
+
+    public static XamlTypeSystem Create(Compilation compilation, bool isFrameworkOnly = false, bool hasGeneratedCode = true) =>
+        new(compilation, isFrameworkOnly, hasGeneratedCode);
 
     public string? GetPreferredPrefix(string uri) => _preferredPrefixes.GetValueOrDefault(uri);
 

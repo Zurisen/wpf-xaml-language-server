@@ -37,6 +37,15 @@ Emacs, or from CI and AI agents.
   - Completion lists every key in scope, and go to definition and hover work across files.
   - Warnings for missing `StaticResource` keys and for missing dictionary `Source` files. A warning is only given
     when every dictionary in scope could be read.
+- **Bindings:**
+  - Binding paths resolve against the data context the XAML declares: `d:DataContext`, an implicit
+    `DataTemplate DataType`, an `ItemTemplate`'s `ItemsSource` items, `DataContext="{Binding …}"` or
+    `<X.DataContext>`.
+  - `ElementName`, `RelativeSource` (`Self`, `AncestorType`, `TemplatedParent`) and `Source` are understood.
+  - Completion works segment by segment (`Customer.Address.|`), and hover and go to definition work on each segment.
+  - Warnings for path segments that can't exist. Nothing is reported when the data context is unknown, or when a
+    subclass could have the property.
+  - `{TemplateBinding}` is checked against the template's `TargetType`.
 - **Hover:** signatures and XML documentation for types, properties, attached properties, events, enum values,
   directives and resource keys.
 - **Go to definition:** from XAML into C# (project types, properties, event handlers, `x:Class`, `x:Static`
@@ -123,6 +132,8 @@ wpf-xaml-ls --help
 | XLS1012 | Property element owner doesn't match its parent (warning) |
 | XLS1013 | Resource dictionary `Source` file not found (warning) |
 | XLS1014 | `StaticResource` key not found (warning) |
+| XLS1015 | Binding path segment not found on the data context type (warning) |
+| XLS1016 | `TemplateBinding` property not found on the template's `TargetType` (warning) |
 | XLS9001 | File is excluded from its project's build; only syntax is checked (information) |
 
 ## Development

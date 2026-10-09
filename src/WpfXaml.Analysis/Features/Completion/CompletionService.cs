@@ -288,7 +288,7 @@ public sealed class CompletionService
         // "{}" is the literal escape, except right after an editor auto-paired the braces: "{|}".
         if (raw.StartsWith('{') && (!raw.StartsWith("{}", StringComparison.Ordinal) || offset == valueSpan.Start + 1))
         {
-            return MarkupExtension(element, raw, valueSpan, offset);
+            return MarkupExtension(element, attribute, raw, valueSpan, offset);
         }
 
         if (attribute.IsNamespaceDeclaration)
@@ -435,7 +435,7 @@ public sealed class CompletionService
 
     // ---------------------------------------------------------------- markup extensions
 
-    private XamlCompletionList? MarkupExtension(XamlElement scope, string raw, TextSpan valueSpan, int offset)
+    private XamlCompletionList? MarkupExtension(XamlElement scope, XamlAttribute attribute, string raw, TextSpan valueSpan, int offset)
     {
         var root = MarkupExtensionParser.Parse(raw, valueSpan.Start).Root;
         var extension = root?.DescendantsAndSelf()
@@ -468,6 +468,19 @@ public sealed class CompletionService
 
             if (argument.Value.Extension is null && argument.Value.Span.ContainsOrTouches(offset))
             {
+                if (type.Symbol.DerivesFrom(_model.Types.Known.Binding))
+                {
+                    if (argument.Name == "Path" || (argument.IsPositional && argument == extension.PositionalArguments.First()))
+                    {
+                        return BindingPathCompletion(scope, attribute, extension, argument, type, offset);
+                    }
+
+                    if (argument.Name == "ElementName")
+                    {
+                        return new XamlCompletionList(argument.Value.Span, NamedElementItems().ToList());
+                    }
+                }
+
                 var items = ArgumentValueItems(scope, type, argument).ToList();
                 if (argument.IsPositional)
                 {
@@ -485,10 +498,75 @@ public sealed class CompletionService
         if (!extension.Arguments.Any())
         {
             all.InsertRange(0, PositionalValueItems(scope, type, 0, 1));
+            if (type.Symbol.DerivesFrom(_model.Types.Known.Binding) && _model.Bindings.GetBinding(extension, scope, attribute)?.Source.Type is { } source)
+            {
+                // {Binding |}: the first positional argument is the path.
+                all.InsertRange(0, PathPropertyItems(source));
+            }
         }
 
         return new XamlCompletionList(empty, all);
     }
+
+    /// <summary>
+    /// <c>{Binding Customer.Na|}</c>: properties of the type the path so far resolves to, replacing only the
+    /// segment being typed.
+    /// </summary>
+    private XamlCompletionList? BindingPathCompletion(
+        XamlElement scope, XamlAttribute attribute, MarkupExtensionSyntax extension, MarkupArgumentSyntax argument, XamlTypeInfo type, int offset)
+    {
+        if (_model.Bindings.GetBinding(extension, scope, attribute) is not { } binding)
+        {
+            return null;
+        }
+
+        var path = argument.Value.Text;
+        var start = binding.PathOffset;
+        var caret = Math.Clamp(offset - start, 0, path.Length);
+        var separator = path.LastIndexOfAny(['.', '/'], Math.Max(0, caret - 1));
+        if (caret == 0)
+        {
+            separator = -1;
+        }
+
+        var owner = separator < 0
+            ? binding.Source.Type
+            : _model.Bindings.ResolvePath(binding.Source, path[..(separator + 1)], start, scope).ResultType;
+
+        var segmentStart = separator + 1;
+        var segmentEnd = segmentStart;
+        while (segmentEnd < path.Length && (char.IsLetterOrDigit(path[segmentEnd]) || path[segmentEnd] == '_'))
+        {
+            segmentEnd++;
+        }
+
+        var items = owner is null || _model.Bindings.IsOpen(owner) ? [] : PathPropertyItems(owner).ToList();
+        if (argument.IsPositional && separator < 0)
+        {
+            // A positional value may really be the start of a named argument: {Binding Mo|
+            items.AddRange(ArgumentNameItems(type, extension, argument));
+        }
+
+        return new XamlCompletionList(TextSpan.FromBounds(start + segmentStart, start + Math.Max(segmentEnd, caret)), items);
+    }
+
+    private static IEnumerable<XamlCompletionItem> PathPropertyItems(Microsoft.CodeAnalysis.ITypeSymbol owner) =>
+        Bindings.BindingResolver.GetBindableProperties(owner).Select(p => new XamlCompletionItem(p.Name, XamlCompletionKind.Property)
+        {
+            Detail = DocumentationFormatter.ShortTypeName(p.Type),
+            Symbol = p,
+            SortText = "0" + p.Name,
+        });
+
+    /// <summary>Names declared with x:Name or Name, for ElementName.</summary>
+    private IEnumerable<XamlCompletionItem> NamedElementItems() =>
+        _document.AllElements()
+            .SelectMany(e => e.Attributes
+                .Where(a => a.Name.LocalName == "Name" && a.Value is { Length: > 0 }
+                    && (a.Name.Prefix is null || e.LookupNamespace(a.Name.Prefix) == XmlNamespaces.Xaml2006))
+                .Select(a => (Name: a.Value!, Element: e)))
+            .DistinctBy(n => n.Name)
+            .Select(n => new XamlCompletionItem(n.Name, XamlCompletionKind.Value) { Detail = n.Element.Name.FullName, SortText = "0" + n.Name });
 
     private static IEnumerable<XamlCompletionItem> ArgumentNameItems(XamlTypeInfo type, MarkupExtensionSyntax extension, MarkupArgumentSyntax? current)
     {

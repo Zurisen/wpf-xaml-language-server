@@ -26,7 +26,25 @@ public sealed class WellKnownTypes
         IDictionary = Get("System.Collections.IDictionary");
         IAddChild = Get("System.Windows.Markup.IAddChild");
         Type = Get("System.Type");
+        Binding = Get("System.Windows.Data.Binding");
+        TemplateBindingExtension = Get("System.Windows.TemplateBindingExtension");
+        DataTemplate = Get("System.Windows.DataTemplate");
+        ICustomTypeDescriptor = Get("System.ComponentModel.ICustomTypeDescriptor");
+        IDynamicMetaObjectProvider = Get("System.Dynamic.IDynamicMetaObjectProvider");
+        SetterBase = Get("System.Windows.SetterBase");
+        TriggerBase = Get("System.Windows.TriggerBase");
+        Condition = Get("System.Windows.Condition");
     }
+
+    public INamedTypeSymbol? SetterBase { get; }
+    public INamedTypeSymbol? TriggerBase { get; }
+    public INamedTypeSymbol? Condition { get; }
+
+    public INamedTypeSymbol? Binding { get; }
+    public INamedTypeSymbol? TemplateBindingExtension { get; }
+    public INamedTypeSymbol? DataTemplate { get; }
+    public INamedTypeSymbol? ICustomTypeDescriptor { get; }
+    public INamedTypeSymbol? IDynamicMetaObjectProvider { get; }
 
     public INamedTypeSymbol? DependencyObject { get; }
     public INamedTypeSymbol? DependencyProperty { get; }

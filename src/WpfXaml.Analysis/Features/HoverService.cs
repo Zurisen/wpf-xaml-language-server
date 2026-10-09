@@ -32,6 +32,9 @@ public static class HoverService
                 ? DocumentationFormatter.Hover(cls.ToDisplayString(DocumentationFormatter.FullTypeFormat), cls)
                 : $"Class `{target.Name}` (generated from this XAML)",
             XamlTargetKind.ResourceReference or XamlTargetKind.ResourceKey => ResourceHover(model, target),
+            XamlTargetKind.BindingPath when target.Symbol is { } property =>
+                DocumentationFormatter.Hover(property.ToDisplayString(DocumentationFormatter.SignatureFormat), property)
+                + (target.Name is { } context ? $"\n\nData context: `{context}`" : string.Empty),
             _ => null,
         };
 

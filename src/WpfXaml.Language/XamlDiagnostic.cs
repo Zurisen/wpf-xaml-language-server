@@ -32,6 +32,8 @@ public static class DiagnosticCodes
     public const string PropertyElementOwnerMismatch = "XLS1012";
     public const string ResourceDictionaryNotFound = "XLS1013";
     public const string ResourceNotFound = "XLS1014";
+    public const string BindingPathNotFound = "XLS1015";
+    public const string TemplateBindingPropertyNotFound = "XLS1016";
 
     /// <summary>Informational: the file is excluded from its project's build, so semantic checks are skipped.</summary>
     public const string ExcludedFromBuild = "XLS9001";

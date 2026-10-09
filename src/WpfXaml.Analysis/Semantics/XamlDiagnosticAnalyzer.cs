@@ -1,4 +1,6 @@
 using Microsoft.CodeAnalysis;
+using WpfXaml.Analysis.Bindings;
+using WpfXaml.Analysis.Features;
 using WpfXaml.Analysis.Resources;
 using WpfXaml.Analysis.TypeSystem;
 using WpfXaml.Language;
@@ -40,7 +42,7 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
 
                 if (model.GetMarkupExtension(attribute) is { } markup)
                 {
-                    AnalyzeMarkupExtension(element, markup);
+                    AnalyzeMarkupExtension(element, attribute, markup);
                 }
                 else if (attributeInfo.Member is { } member && attribute.Value is { } value && attribute.ValueSpan is { } span)
                 {
@@ -97,6 +99,53 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
         }
     }
 
+    /// <summary>
+    /// A binding path segment that doesn't exist on a statically known source. Silent whenever the source type
+    /// is unknown or open, and during the generator-free first pass (generated properties would be missing).
+    /// </summary>
+    private void AnalyzeBinding(XamlElement scope, XamlAttribute attribute, MarkupExtensionSyntax extension)
+    {
+        if (!model.Types.HasGeneratedCode || model.Bindings.GetBinding(extension, scope, attribute) is not { } binding
+            || binding.Source.Type is null || binding.PathArgument?.Value.Extension is not null)
+        {
+            return;
+        }
+
+        var resolution = model.Bindings.ResolvePath(binding.Source, binding.Path, binding.PathOffset, scope);
+        if (resolution.Missing is not { IsCertain: true } missing)
+        {
+            return;
+        }
+
+        var ownerName = DocumentationFormatter.ShortTypeName(missing.Owner);
+        var suggestion = NameSuggestions.Closest(missing.Segment.Text, BindingResolver.GetBindableProperties(missing.Owner).Select(p => p.Name));
+        var origin = resolution.Segments.Count == 0 ? $" (data context from {binding.Source.Origin})" : string.Empty;
+        Add(new XamlDiagnostic(DiagnosticCodes.BindingPathNotFound,
+            $"'{missing.Segment.Text}' is not a property of '{ownerName}'{origin}.{NameSuggestions.DidYouMean(suggestion)}",
+            missing.Segment.Span, XamlDiagnosticSeverity.Warning));
+    }
+
+    /// <summary><c>{TemplateBinding X}</c> where the template's TargetType has no property X.</summary>
+    private void AnalyzeTemplateBinding(XamlElement scope, MarkupExtensionSyntax extension)
+    {
+        var argument = extension.FindArgument("Property") ?? extension.PositionalArguments.FirstOrDefault();
+        if (argument is not { Value: { Extension: null, Text: { Length: > 0 } text } } || text.Contains('.') || text.Contains(':'))
+        {
+            return; // Owner-qualified names (attached or explicit owner) are not checked.
+        }
+
+        var name = text.Trim();
+        if (model.FindTargetType(scope) is not { } target || target.GetMember(name) is not null || target.GetAttachableMember(name) is not null)
+        {
+            return;
+        }
+
+        var suggestion = NameSuggestions.Closest(name, target.Members.Where(m => !m.IsEvent).Select(m => m.Name));
+        Add(new XamlDiagnostic(DiagnosticCodes.TemplateBindingPropertyNotFound,
+            $"'{name}' is not a property of the template's TargetType '{target.Name}'.{NameSuggestions.DidYouMean(suggestion)}",
+            argument.Value.Span, XamlDiagnosticSeverity.Warning));
+    }
+
     private bool IsDeferredContent(XamlElement element) =>
         (model.Document.Root is { } root && ResourceCollector.IsDictionaryElement(root))
         || element.Ancestors().Any(a => !a.IsPropertyElement && model.GetElementInfo(a).Type?.IsTemplate == true);
@@ -148,7 +197,7 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
         }
     }
 
-    private void AnalyzeMarkupExtension(XamlElement scope, MarkupExtensionParseResult markup)
+    private void AnalyzeMarkupExtension(XamlElement scope, XamlAttribute attribute, MarkupExtensionParseResult markup)
     {
         foreach (var diagnostic in markup.Diagnostics)
         {
@@ -172,6 +221,14 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
             if (type.Symbol.DerivesFrom(model.Types.Known.StaticResourceExtension))
             {
                 AnalyzeStaticResource(scope, extension);
+            }
+            else if (type.Symbol.DerivesFrom(model.Types.Known.Binding) && ReferenceEquals(extension, markup.Root))
+            {
+                AnalyzeBinding(scope, attribute, extension);
+            }
+            else if (type.Symbol.DerivesFrom(model.Types.Known.TemplateBindingExtension))
+            {
+                AnalyzeTemplateBinding(scope, extension);
             }
 
             foreach (var argument in extension.Arguments)

@@ -610,18 +610,19 @@ public sealed class ProjectSystem : IDisposable
     private async Task<XamlTypeSystem?> GetTypesAsync(Project project, CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        var compilation = await GetCompilationAsync(project, cancellationToken).ConfigureAwait(false);
+        var (compilation, complete) = await GetCompilationAsync(project, cancellationToken).ConfigureAwait(false);
         if (compilation is null)
         {
             return _framework.Value;
         }
 
         var compiled = stopwatch.Elapsed;
-        var types = _typeSystems.GetValue(compilation, c => XamlTypeSystem.Create(c));
+        var types = _typeSystems.GetValue(compilation, c => XamlTypeSystem.Create(c, hasGeneratedCode: complete));
         if (stopwatch.ElapsedMilliseconds > 500)
         {
-            _log.Debug($"Type system for {project.Name}: compilation {compiled.TotalMilliseconds:F0} ms, total {stopwatch.ElapsedMilliseconds} ms.");
+            _log.Debug($"Type system for {project.Name}: compilation {compiled.TotalMilliseconds:F0} ms, total {stopwatch.ElapsedMilliseconds} ms{(complete ? string.Empty : " (without generators)")}.");
         }
+
         if (types.GetNamespace(Language.Syntax.XmlNamespaces.WpfPresentation) is not null)
         {
             return types;
@@ -647,12 +648,12 @@ public sealed class ProjectSystem : IDisposable
     /// <see cref="_waitForGenerators"/> is set, a generator-free compilation answers first, the full one runs in
     /// the background, and <see cref="Changed"/> fires when it is ready so diagnostics are recomputed with it.
     /// </summary>
-    private async Task<Compilation?> GetCompilationAsync(Project project, CancellationToken cancellationToken)
+    private async Task<(Compilation? Compilation, bool Complete)> GetCompilationAsync(Project project, CancellationToken cancellationToken)
     {
         var full = _fullCompilations.GetValue(project, p => Task.Run(() => p.GetCompilationAsync(CancellationToken.None)));
         if (full.IsCompletedSuccessfully || _waitForGenerators || !project.AnalyzerReferences.Any())
         {
-            return await full.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return (await full.WaitAsync(cancellationToken).ConfigureAwait(false), true);
         }
 
         var quick = _quickCompilations.GetValue(project, p =>
@@ -663,7 +664,7 @@ public sealed class ProjectSystem : IDisposable
 
         // Whichever is ready first: on small projects the full compilation can win.
         await Task.WhenAny(full, quick).WaitAsync(cancellationToken).ConfigureAwait(false);
-        return full.IsCompletedSuccessfully ? full.Result : await quick.ConfigureAwait(false);
+        return full.IsCompletedSuccessfully ? (full.Result, true) : (await quick.ConfigureAwait(false), false);
     }
 
     private XamlTypeSystem? CreateFrameworkTypeSystem(int? frameworkVersion)

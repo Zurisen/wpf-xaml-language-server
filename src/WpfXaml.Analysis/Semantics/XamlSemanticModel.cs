@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.CodeAnalysis;
+using WpfXaml.Analysis.Bindings;
 using WpfXaml.Analysis.Resources;
 using WpfXaml.Analysis.TypeSystem;
 using WpfXaml.Language;
@@ -21,6 +22,7 @@ public sealed class XamlSemanticModel
     private readonly Lazy<INamedTypeSymbol?> _classSymbol;
     private readonly Lazy<ResourceScope> _applicationScope;
     private readonly ResourceCollector _resourceCollector;
+    private readonly Lazy<BindingResolver> _bindings;
 
     /// <param name="resources">Access to other XAML files for resource lookup; without it only this document's resources are known.</param>
     public XamlSemanticModel(XamlDocument document, XamlTypeSystem types, XamlResourceContext? resources = null)
@@ -31,6 +33,7 @@ public sealed class XamlSemanticModel
         _classSymbol = new Lazy<INamedTypeSymbol?>(FindClassSymbol);
         _resourceCollector = new ResourceCollector(resources, document);
         _applicationScope = new Lazy<ResourceScope>(() => new ResourceScope(_resourceCollector.FromApplications(), null));
+        _bindings = new Lazy<BindingResolver>(() => new BindingResolver(this));
     }
 
     public XamlDocument Document { get; }
@@ -38,6 +41,9 @@ public sealed class XamlSemanticModel
     public XamlTypeSystem Types { get; }
 
     public XamlResourceContext? Resources { get; }
+
+    /// <summary>Data context inference and binding path resolution.</summary>
+    public BindingResolver Bindings => _bindings.Value;
 
     /// <summary>
     /// The resources visible at <paramref name="element"/>: its own and its ancestors' <c>Resources</c>

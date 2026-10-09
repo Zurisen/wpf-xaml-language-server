@@ -27,6 +27,9 @@ public enum XamlTargetKind
 
     /// <summary>The <c>Type.Member</c> argument of <c>{x:Static}</c>.</summary>
     StaticMember,
+
+    /// <summary>A segment of a binding path; <see cref="XamlTarget.Name"/> describes the data context for the first one.</summary>
+    BindingPath,
 }
 
 /// <summary>What the caret is on: the shared input of hover and go to definition.</summary>
@@ -121,7 +124,7 @@ public static class XamlTargetResolver
         var element = attribute.Element;
         if (model.GetMarkupExtension(attribute) is { Root: { } root })
         {
-            return ResolveMarkupExtension(model, element, root, offset);
+            return ResolveMarkupExtension(model, element, attribute, root, offset);
         }
 
         var value = attribute.Value ?? string.Empty;
@@ -180,7 +183,7 @@ public static class XamlTargetResolver
         return null;
     }
 
-    private static XamlTarget? ResolveMarkupExtension(XamlSemanticModel model, XamlElement scope, MarkupExtensionSyntax root, int offset)
+    private static XamlTarget? ResolveMarkupExtension(XamlSemanticModel model, XamlElement scope, XamlAttribute attribute, MarkupExtensionSyntax root, int offset)
     {
         var extension = root.DescendantsAndSelf().LastOrDefault(e => e.Span.ContainsOrTouches(offset));
         if (extension is null)
@@ -208,6 +211,12 @@ public static class XamlTargetResolver
 
             if (argument.Value.Extension is null && argument.Value.Span.ContainsOrTouches(offset))
             {
+                if (type.Symbol.DerivesFrom(model.Types.Known.Binding)
+                    && (argument.Name == "Path" || (argument.IsPositional && argument == extension.PositionalArguments.First())))
+                {
+                    return ResolveBindingPath(model, scope, attribute, extension, offset);
+                }
+
                 return ResolveMarkupArgumentValue(model, scope, type, argument);
             }
         }
@@ -273,16 +282,40 @@ public static class XamlTargetResolver
         return symbol is null ? null : new XamlTarget(XamlTargetKind.StaticMember, span) { Symbol = symbol, Type = type };
     }
 
+    /// <summary>The property a binding path segment refers to, resolved against the binding's source.</summary>
+    private static XamlTarget? ResolveBindingPath(XamlSemanticModel model, XamlElement scope, XamlAttribute attribute, MarkupExtensionSyntax extension, int offset)
+    {
+        if (model.Bindings.GetBinding(extension, scope, attribute) is not { } binding)
+        {
+            return null;
+        }
+
+        var resolution = model.Bindings.ResolvePath(binding.Source, binding.Path, binding.PathOffset, scope);
+        for (var i = 0; i < resolution.Segments.Count; i++)
+        {
+            var segment = resolution.Segments[i];
+            if (segment.Symbol is { } symbol && segment.Segment.Span.ContainsOrTouches(offset))
+            {
+                var context = i == 0 && binding.Source.Type is { } source
+                    ? $"{DocumentationFormatter.ShortTypeName(source)} (from {binding.Source.Origin})"
+                    : null;
+                return new XamlTarget(XamlTargetKind.BindingPath, segment.Segment.Span) { Symbol = symbol, Name = context };
+            }
+        }
+
+        return null;
+    }
+
     internal static bool IsResourceExtension(XamlSemanticModel model, XamlTypeInfo type) =>
         type.Symbol.DerivesFrom(model.Types.Known.StaticResourceExtension) || type.Symbol.DerivesFrom(model.Types.Known.DynamicResourceExtension);
 
     /// <summary>
-    /// Members whose string value names a type: real <c>System.Type</c> properties, plus <c>DataType</c>
-    /// (typed as object on DataTemplate but always given a type in practice).
+    /// Members whose string value names a type (<c>System.Type</c> properties such as TargetType). Not
+    /// DataTemplate.DataType: it is typed object, and a plain string there names an XML element; CLR types
+    /// must be written as <c>{x:Type T}</c>.
     /// </summary>
     internal static bool IsTypeValued(XamlSemanticModel model, XamlMember member) =>
-        SymbolEqualityComparer.Default.Equals(member.ValueType, model.Types.Known.Type)
-        || (member.Name == "DataType" && member.ValueType?.SpecialType == SpecialType.System_Object);
+        SymbolEqualityComparer.Default.Equals(member.ValueType, model.Types.Known.Type);
 
     /// <summary>Type of the constructor parameter a positional argument maps to.</summary>
     internal static ITypeSymbol? GetPositionalParameterType(XamlTypeInfo extensionType, MarkupArgumentSyntax argument)

@@ -53,6 +53,10 @@ public class ProjectLoadingTests
         var keys = await client.RequestAsync<CompletionList>("textDocument/completion", Request(uri, At("LibAccentBrush", 0)));
         Assert.Contains(keys.Items, i => i.Label == "AccentBrush");
 
+        // Binding paths complete against the d:DataContext view model.
+        var bindingItems = await client.RequestAsync<CompletionList>("textDocument/completion", Request(uri, At("Greeting", 0)));
+        Assert.Contains(bindingItems.Items, i => i.Label == "IsBusy");
+
         // Hover on a project property shows its XML docs.
         var count = await client.RequestAsync<Hover>("textDocument/hover", Request(uri, At("Count=", 1)));
         Assert.Contains("The number shown in the badge.", count.Contents.Value);
