@@ -10,8 +10,13 @@
     <ToolCommandName>wpf-xaml-ls</ToolCommandName>
     <PackageId>WpfXaml.LanguageServer</PackageId>
     <Description>Language server (LSP) for WPF XAML: completion, diagnostics, hover and go to definition in any editor.</Description>
-    <PackageTags>wpf;xaml;lsp;language-server</PackageTags>
+    <PackageTags>wpf;xaml;lsp;language-server;neovim;dotnet-tool</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\WpfXaml.Analysis\WpfXaml.Analysis.csproj" />

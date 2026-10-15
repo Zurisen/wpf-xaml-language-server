@@ -5,6 +5,10 @@ on:
     branches: [master]
   pull_request:
 
+# Read-only token: CI never writes to the repository (matters once pull requests come from forks).
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     strategy:

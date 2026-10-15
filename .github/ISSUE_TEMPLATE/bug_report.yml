@@ -1,0 +1,56 @@
+name: Bug report
+description: A wrong or missing diagnostic, completion, hover or definition, a crash, or a project that won't load.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! False positives (valid XAML that gets flagged) are the most valuable reports.
+        Please don't paste proprietary code: a reduced example is better anyway.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong?
+      options:
+        - Valid XAML is flagged (false positive)
+        - A real problem isn't flagged
+        - Completion, hover or go to definition is wrong or missing
+        - The server crashes or hangs
+        - A project or solution doesn't load
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: diagnostic
+    attributes:
+      label: Diagnostic code and message
+      description: If it's about a diagnostic.
+      placeholder: "XLS1015 'Name' is not a property of 'Customer' (data context from d:DataContext)."
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal XAML to reproduce
+      description: Plus the C# types it uses if they matter (view model, custom control).
+      render: xml
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect, and why?
+      description: For a false positive, e.g. "it works at run time" or "the WPF build accepts it".
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log (optional)
+      description: From `wpf-xaml-ls --log-level debug --log-file wpf-xaml-ls.log`, or `wpf-xaml-ls check <your.sln> --log-level debug`.
+      render: text
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "wpf-xaml-ls 0.1.0-alpha, Neovim 0.12, Windows 11, .NET SDK 10.0.301, net8.0-windows project"
+    validations:
+      required: true

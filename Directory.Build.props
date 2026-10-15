@@ -9,7 +9,10 @@
     <Deterministic>true</Deterministic>
 
     <Authors>wpf-xaml-ls contributors</Authors>
+    <Copyright>Copyright (c) 2026 wpf-xaml-ls contributors</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Zurisen/wpf-xaml-language-server</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Zurisen/wpf-xaml-language-server.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <Version>0.1.0-alpha</Version>
   </PropertyGroup>

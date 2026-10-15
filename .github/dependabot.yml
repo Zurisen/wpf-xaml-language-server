@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # Roslyn packages must move together.
+      roslyn:
+        patterns: ["Microsoft.CodeAnalysis.*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

@@ -1,7 +1,7 @@
 # Architecture
 
 This document records how wpf-xaml-ls is built and the decisions behind it. It answers the open questions in
-[PROBLEM_STATEMENT.md](../PROBLEM_STATEMENT.md#9-open-questions).
+[the problem statement](problem-statement.md#9-open-questions).
 
 ## Layers
 

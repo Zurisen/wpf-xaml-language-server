@@ -1,10 +1,14 @@
 # wpf-xaml-ls
 
-An open-source, editor-agnostic language server (LSP) for **WPF XAML**. It understands WPF types, properties,
-attached properties, events, markup extensions and your own project's code. Use it in Neovim, VS Code, Zed, Helix,
-Emacs, or from CI and AI agents.
+[![CI](https://github.com/Zurisen/wpf-xaml-language-server/actions/workflows/ci.yml/badge.svg)](https://github.com/Zurisen/wpf-xaml-language-server/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> Status: early alpha (0.1). See [PROBLEM_STATEMENT.md](PROBLEM_STATEMENT.md) for the motivation and
+An open-source, editor-agnostic language server (LSP) for **WPF XAML**. It understands WPF types, properties,
+attached properties, events, markup extensions, resources, bindings and your own project's code. Use it in Neovim,
+VS Code, Zed, Helix or Emacs, or from CI and AI agents.
+
+> **Status: early alpha (0.1).** It works on real solutions (see below), but expect rough edges, and
+> report them. See [docs/problem-statement.md](docs/problem-statement.md) for the motivation and
 > [docs/architecture.md](docs/architecture.md) for the design and roadmap.
 
 ## Features
@@ -27,7 +31,8 @@ Emacs, or from CI and AI agents.
   - `Setter.Property` from the style's `TargetType`;
   - event handlers from the code-behind;
   - markup extensions and their arguments (`{Binding Mode=…}`, `{RelativeSource …}`, `{x:Type …}`);
-  - `StaticResource` keys;
+  - resource keys;
+  - binding paths;
   - closing tags;
   - `xmlns` URIs.
 - **Resources:**
@@ -47,9 +52,9 @@ Emacs, or from CI and AI agents.
     subclass could have the property.
   - `{TemplateBinding}` is checked against the template's `TargetType`.
 - **Hover:** signatures and XML documentation for types, properties, attached properties, events, enum values,
-  directives and resource keys.
+  directives, resource keys and binding paths.
 - **Go to definition:** from XAML into C# (project types, properties, event handlers, `x:Class`, `x:Static`
-  members) and from `{StaticResource}` to its `x:Key`, in whichever file defines it.
+  members, binding paths) and from `{StaticResource}` to its `x:Key`, in whichever file defines it.
 - **Project-aware:** loads your `.sln`, `.slnx` or `.csproj` with MSBuild, so it sees project types even before
   they are built. It needs no WPF runtime: it reads reference assemblies.
   - It knows exactly which XAML files each project builds. Files excluded with `<Page Remove>` aren't reported.
@@ -57,15 +62,31 @@ Emacs, or from CI and AI agents.
   - Up-to-date project references are read from their built DLLs, for speed.
 - **`check` command:** prints diagnostics for a whole solution in MSBuild format, for CI or agents.
 
-Tested on a 117-project commercial solution with 719 XAML files:
+**Diagnostics aim for zero false positives.** Anything the server can't know statically is not reported: a data
+context set in code, a resource dictionary from a NuGet package, a property a subclass might add. The rules are
+calibrated against a 117-project commercial WPF solution with 719 XAML files. On that solution:
 
 - Projects load in about 25 s.
-- Opening a file in the largest project gives diagnostics in about 2.5 s.
+- Opening a file in the largest project gives diagnostics in about 2.5 s (more complete ones follow a few seconds
+  later).
 - Completion takes 10–15 ms after warm-up.
+
+### Known limitations
+
+- **Requirements:** a .NET 10 SDK, and projects restored before the server can load them (`dotnet restore`, or a
+  build).
+- **Windows-first:** analysis runs anywhere, but loading `net*-windows` projects is tested on Windows only.
+- **Not checked yet:**
+  - non-string resource keys (`{x:Type …}` implicit styles, `ComponentResourceKey`) and theme dictionaries;
+  - bindings written as elements (`<Binding/>` inside `MultiBinding`), converters and value types;
+  - .NET Framework (non-SDK) projects, which fall back to framework types.
+- **Missing features:** code actions, rename, find references, formatting, document symbols and folding. See the
+  [roadmap](docs/architecture.md#known-gaps--next-steps).
 
 ## Install
 
-Requires the .NET 10 SDK, or the .NET 10 runtime plus the SDK your projects use. Build and install from source:
+Requires the .NET 10 SDK, or the .NET 10 runtime plus the SDK your projects use. Until the first NuGet release,
+build and install from source:
 
 ```bash
 dotnet pack src/WpfXaml.LanguageServer -c Release -o artifacts
@@ -77,16 +98,18 @@ dotnet tool install -g --add-source artifacts WpfXaml.LanguageServer --prereleas
 
 This puts `wpf-xaml-ls` on your PATH.
 
-Projects must be restored (`dotnet restore`, or a build) before the server can load them, as with other .NET
-language servers.
-
 ## Editors
 
 ### Neovim (0.11+)
 
-Copy [editors/nvim/wpf-xaml-ls.lua](editors/nvim/wpf-xaml-ls.lua) into your config. It registers a `xaml` filetype,
-reuses the XML tree-sitter parser for highlighting, and starts the server from the folder that contains your
-solution.
+Copy [editors/nvim/wpf-xaml-ls.lua](editors/nvim/wpf-xaml-ls.lua) to your config's `after/plugin/` folder:
+`~/.config/nvim/after/plugin/` on Linux and macOS, `%LOCALAPPDATA%\nvim\after\plugin\` on Windows. It needs no
+plugins and works next to lemminx (the XML language server):
+
+- `.xaml` files keep (or get) the `xml` filetype, so XML highlighting, tree-sitter and lemminx keep working.
+- The server starts only for `.xaml` files, rooted at the nearest solution, project or git root.
+- lemminx's duplicate XML-syntax diagnostics are hidden in XAML buffers. lemminx still provides formatting,
+  folding and the outline.
 
 ### VS Code
 
@@ -136,19 +159,11 @@ wpf-xaml-ls --help
 | XLS1016 | `TemplateBinding` property not found on the template's `TargetType` (warning) |
 | XLS9001 | File is excluded from its project's build; only syntax is checked (information) |
 
-## Development
+## Contributing
 
-```bash
-dotnet build WpfXamlLs.slnx
-```
-
-```bash
-dotnet test --solution WpfXamlLs.slnx
-```
-
-The tests use the WPF targeting pack installed with the .NET SDK. They are skipped where it is missing. The
-end-to-end test builds [samples/](samples) and loads it through MSBuild over LSP (Windows only). It covers loading
-on demand, built references and excluded pages. CI runs on Windows and Ubuntu.
+Bug reports, especially false positives, and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+how to build, test, and report a diagnostic that's wrong. Report security issues privately as described in
+[SECURITY.md](SECURITY.md).
 
 | Project | Purpose |
 |---|---|
@@ -158,4 +173,5 @@ on demand, built references and excluded pages. CI runs on Windows and Ubuntu.
 
 ## License
 
-MIT
+[MIT](LICENSE). This is an independent project, not affiliated with or endorsed by Microsoft. WPF, Windows and
+Visual Studio are trademarks of Microsoft.

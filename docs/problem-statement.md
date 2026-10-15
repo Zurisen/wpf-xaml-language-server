@@ -1,6 +1,8 @@
 # WPF XAML Language Server — Problem Statement
 
-*Draft, 2026-10-07. Written to kick off the design of an open-source project.*
+*Written on 2026-10-07 to kick off the project, and kept as its original motivation. For what has been built
+and how the open questions in section 9 were answered, see the [README](../README.md) and
+[architecture.md](architecture.md).*
 
 ## 1. Summary
 
