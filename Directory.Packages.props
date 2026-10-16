@@ -10,6 +10,6 @@
     <PackageVersion Include="StreamJsonRpc" Version="2.25.29" />
     <PackageVersion Include="Nerdbank.Streams" Version="2.14.405" />
 
-    <PackageVersion Include="xunit.v3" Version="4.0.1" />
+    <PackageVersion Include="xunit.v3" Version="4.0.2" />
   </ItemGroup>
 </Project>
