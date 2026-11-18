@@ -1,0 +1,98 @@
+name: Release
+
+# Pushing a tag like v0.1.0-alpha builds, tests and packs that version, publishes it to nuget.org (trusted
+# publishing, no stored API key) and creates the GitHub release. Running it manually is a dry run: it packs and
+# uploads the package as an artifact, and publishes nothing. See docs/releasing.md.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to pack (dry run: nothing is published)"
+        required: true
+        default: "0.0.0-dryrun"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    # Windows: the tests include the end-to-end test against the WPF samples.
+    runs-on: windows-latest
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # nuget.org trusted publishing (GitHub OIDC)
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          dotnet-version: 8.0.x
+
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Build
+        run: dotnet build WpfXamlLs.slnx -c Release -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Test
+        run: dotnet test --solution WpfXamlLs.slnx -c Release --no-build
+
+      - name: Pack
+        run: dotnet pack src/WpfXaml.LanguageServer -c Release --no-build -p:Version=${{ steps.version.outputs.version }} -o artifacts
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wpf-xaml-ls-${{ steps.version.outputs.version }}
+          path: artifacts/*.nupkg
+
+      # The release notes are this version's section of CHANGELOG.md; releasing a version it doesn't describe fails.
+      - name: Release notes
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          awk -v heading="## [$version]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no '## [$version]' section."
+            exit 1
+          fi
+
+      - name: NuGet login (trusted publishing)
+        if: github.event_name == 'push'
+        id: nuget
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Publish to nuget.org
+        if: github.event_name == 'push'
+        run: dotnet nuget push "artifacts/*.nupkg" --api-key ${{ steps.nuget.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
+
+      - name: GitHub release
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then flags="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" artifacts/*.nupkg \
+            --title "wpf-xaml-ls ${{ steps.version.outputs.version }}" \
+            --notes-file release-notes.md $flags
