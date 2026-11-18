@@ -92,6 +92,17 @@ public class BindingTests
     }
 
     [Fact]
+    public void PathTypo_FixRenamesOnlyTheSegment()
+    {
+        var xaml = Window("""<TextBlock Text="{Binding Customer.Nmae, Mode=OneWay}" />""");
+        var fix = Assert.Single(Assert.Single(BindingDiagnostics(xaml)).Fixes);
+        var edit = Assert.Single(fix.Edits);
+
+        Assert.Equal("Name", edit.NewText);
+        Assert.Equal("Nmae", xaml.Substring(edit.Span.Start, edit.Span.Length));
+    }
+
+    [Fact]
     public void NestedTypo_IsReportedForProjectTypes_ButNotWhenASubclassHasIt()
     {
         var diagnostic = Assert.Single(BindingDiagnostics(Window("""<TextBlock Text="{Binding Customer.Nmae}" />""")));

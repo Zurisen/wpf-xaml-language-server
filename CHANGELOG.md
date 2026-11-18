@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Quick fixes** (`textDocument/codeAction`):
+  - one-action fixes for every "Did you mean …?" diagnostic (types in start and end tags, properties, attached
+    properties, directives, markup extensions and arguments, enum values, resource keys, binding paths,
+    `TemplateBinding` properties);
+  - generating a missing event handler in the code-behind;
+  - adding the `xmlns` for an undeclared prefix or an unimported type.
+
 ### Fixed
 
 - **Builds no longer fail on vulnerability advisories.** Builds failed after a vulnerability advisory for

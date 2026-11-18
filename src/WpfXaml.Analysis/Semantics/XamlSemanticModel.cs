@@ -206,7 +206,8 @@ public sealed class XamlSemanticModel
         {
             var suggestion = NameSuggestions.Closest(name.LocalName, lookup.Namespace.MarkupExtensions.Select(t => t.XamlName));
             error = Error(DiagnosticCodes.UnknownMarkupExtension,
-                $"The markup extension '{name.FullName}' was not found.{NameSuggestions.DidYouMean(suggestion)}", name.Span);
+                $"The markup extension '{name.FullName}' was not found.{NameSuggestions.DidYouMean(suggestion)}", name.Span)
+                .WithFix(NameSuggestions.RenameFix(suggestion, name.LocalNameSpan));
         }
 
         return type;
@@ -258,8 +259,15 @@ public sealed class XamlSemanticModel
         return null;
     }
 
+    /// <summary>All diagnostics, computed once per model (code actions ask for them on every cursor move).</summary>
     public IReadOnlyList<XamlDiagnostic> GetDiagnostics(CancellationToken cancellationToken = default) =>
-        new XamlDiagnosticAnalyzer(this).Analyze(cancellationToken);
+        _diagnostics ??= new XamlDiagnosticAnalyzer(this).Analyze(cancellationToken);
+
+    private IReadOnlyList<XamlDiagnostic>? _diagnostics;
+
+    /// <summary>Diagnostics with quick fixes that overlap <paramref name="span"/> (a caret is an empty span).</summary>
+    public IEnumerable<XamlDiagnostic> GetFixableDiagnostics(TextSpan span, CancellationToken cancellationToken = default) =>
+        GetDiagnostics(cancellationToken).Where(d => d.Fixes.Count > 0 && d.Span.Start <= span.End && span.Start <= d.Span.End);
 
     internal static XamlDiagnostic Error(string code, string message, TextSpan span) =>
         new(code, message, span, XamlDiagnosticSeverity.Error);
@@ -318,14 +326,16 @@ public sealed class XamlSemanticModel
             var owner = ns.FindType(name.OwnerName!);
             if (owner is null)
             {
-                return new ElementInfo(ElementKind.Unknown, Error: lookup.IsAuthoritative ? UnknownTypeError(ns, name.OwnerName!, name.OwnerSpan) : null);
+                return new ElementInfo(ElementKind.Unknown,
+                    Error: lookup.IsAuthoritative ? UnknownTypeError(ns, name.OwnerName!, name.OwnerSpan, TagSpans(element, OwnerLocalSpan)) : null);
             }
 
             var parentObject = GetParentObjectElement(element) is { } p ? GetElementInfo(p).Type : null;
             var member = ResolveDottedMember(owner, name.MemberName, parentObject);
             if (member is null)
             {
-                return new ElementInfo(ElementKind.PropertyElement, OwnerType: owner, Error: UnknownMemberError(owner, name.MemberName, name.MemberNameSpan));
+                return new ElementInfo(ElementKind.PropertyElement, OwnerType: owner,
+                    Error: UnknownMemberError(owner, name.MemberName, name.MemberNameSpan, TagSpans(element, n => n.MemberNameSpan)));
             }
 
             XamlDiagnostic? warning = null;
@@ -342,7 +352,8 @@ public sealed class XamlSemanticModel
         var type = ns.FindElementType(name.LocalName);
         if (type is null)
         {
-            return new ElementInfo(ElementKind.Unknown, Error: lookup.IsAuthoritative ? UnknownTypeError(ns, name.LocalName, name.Span) : null);
+            return new ElementInfo(ElementKind.Unknown,
+                Error: lookup.IsAuthoritative ? UnknownTypeError(ns, name.LocalName, name.Span, TagSpans(element, n => n.LocalNameSpan)) : null);
         }
 
         return new ElementInfo(ElementKind.Object, Type: type);
@@ -450,7 +461,7 @@ public sealed class XamlSemanticModel
         // <VirtualizingStackPanel IsVirtualizing="True" />, <Grid ZIndex="1" />.
         var member = type.GetMember(memberName) ?? type.GetAttachableMember(memberName);
         return member is null
-            ? new AttributeInfo(AttributeKind.Unknown, Error: UnknownMemberError(type, memberName, span))
+            ? new AttributeInfo(AttributeKind.Unknown, Error: UnknownMemberError(type, memberName, span, [span]))
             : new AttributeInfo(AttributeKind.Member, member);
     }
 
@@ -459,12 +470,13 @@ public sealed class XamlSemanticModel
         var owner = ns.FindType(name.OwnerName!);
         if (owner is null)
         {
-            return new AttributeInfo(AttributeKind.Unknown, Error: authoritative ? UnknownTypeError(ns, name.OwnerName!, name.OwnerSpan) : null);
+            return new AttributeInfo(AttributeKind.Unknown,
+                Error: authoritative ? UnknownTypeError(ns, name.OwnerName!, name.OwnerSpan, [OwnerLocalSpan(name)]) : null);
         }
 
         var member = ResolveDottedMember(owner, name.MemberName, elementType);
         return member is null
-            ? new AttributeInfo(AttributeKind.Unknown, Error: UnknownMemberError(owner, name.MemberName, name.MemberNameSpan, attached: true))
+            ? new AttributeInfo(AttributeKind.Unknown, Error: UnknownMemberError(owner, name.MemberName, name.MemberNameSpan, [name.MemberNameSpan], attached: true))
             : new AttributeInfo(AttributeKind.Member, member);
     }
 
@@ -489,7 +501,8 @@ public sealed class XamlSemanticModel
                 XamlDirectives.All.Where(d => d.Usage != DirectiveUsage.Element).Select(d => d.Name));
             var qualified = suggestion is null ? null : $"{attribute.Name.Prefix}:{suggestion}";
             return new AttributeInfo(AttributeKind.Unknown,
-                Error: Error(DiagnosticCodes.UnknownDirective, $"'{attribute.Name.FullName}' is not a XAML directive.{NameSuggestions.DidYouMean(qualified)}", attribute.Name.Span));
+                Error: Error(DiagnosticCodes.UnknownDirective, $"'{attribute.Name.FullName}' is not a XAML directive.{NameSuggestions.DidYouMean(qualified)}", attribute.Name.Span)
+                    .WithFix(NameSuggestions.RenameFix(qualified, attribute.Name.Span)));
         }
 
         if (directive.Usage == DirectiveUsage.Root && attribute.Element.Parent is not null)
@@ -501,18 +514,34 @@ public sealed class XamlSemanticModel
         return new AttributeInfo(AttributeKind.Directive, Directive: directive);
     }
 
-    private static XamlDiagnostic UnknownTypeError(XamlNamespace ns, string typeName, TextSpan span)
+    /// <param name="fixSpans">Where the type name is written (start and end tag), for the rename fix.</param>
+    private static XamlDiagnostic UnknownTypeError(XamlNamespace ns, string typeName, TextSpan span, IEnumerable<TextSpan> fixSpans)
     {
         var suggestion = NameSuggestions.Closest(typeName, ns.Types.Select(t => t.XamlName));
-        return Error(DiagnosticCodes.UnknownType, $"The type '{typeName}' was not found in '{ns.Uri}'.{NameSuggestions.DidYouMean(suggestion)}", span);
+        return Error(DiagnosticCodes.UnknownType, $"The type '{typeName}' was not found in '{ns.Uri}'.{NameSuggestions.DidYouMean(suggestion)}", span)
+            .WithFix(NameSuggestions.RenameFix(suggestion, fixSpans));
     }
 
-    private static XamlDiagnostic UnknownMemberError(XamlTypeInfo type, string memberName, TextSpan span, bool attached = false)
+    private static XamlDiagnostic UnknownMemberError(XamlTypeInfo type, string memberName, TextSpan span, IEnumerable<TextSpan> fixSpans, bool attached = false)
     {
         var candidates = attached ? type.AttachableMembers.Concat(type.Members) : type.Members;
         var suggestion = NameSuggestions.Closest(memberName, candidates.Select(m => m.Name));
         var what = attached ? "an attachable property or event" : "a property or event";
-        return Error(DiagnosticCodes.UnknownMember, $"'{memberName}' is not {what} of '{type.Name}'.{NameSuggestions.DidYouMean(suggestion)}", span);
+        return Error(DiagnosticCodes.UnknownMember, $"'{memberName}' is not {what} of '{type.Name}'.{NameSuggestions.DidYouMean(suggestion)}", span)
+            .WithFix(NameSuggestions.RenameFix(suggestion, fixSpans));
+    }
+
+    /// <summary>The span of the owner type in a dotted name, without prefix: <c>Grid</c> in <c>local:Grid.Row</c>.</summary>
+    private static TextSpan OwnerLocalSpan(XamlName name) => new(name.LocalNameSpan.Start, name.OwnerName!.Length);
+
+    /// <summary>A part of an element's name in its start tag and, when present, its end tag (renames must change both).</summary>
+    private static IEnumerable<TextSpan> TagSpans(XamlElement element, Func<XamlName, TextSpan> part)
+    {
+        yield return part(element.Name);
+        if (element.EndTagName is { } end && end.FullName == element.Name.FullName)
+        {
+            yield return part(end);
+        }
     }
 }
 

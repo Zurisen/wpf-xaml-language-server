@@ -89,6 +89,31 @@ public class LanguageServerTests
     }
 
     [Fact]
+    public async Task CodeAction_OffersSpellingFixWithWorkspaceEdit()
+    {
+        await using var client = await StartAsync();
+        await client.OpenAsync(Uri, Document);
+
+        // Caret inside "Contnet" (line 3, col 14).
+        var position = new Position(3, 14);
+        var actions = await client.RequestAsync<CodeAction[]>("textDocument/codeAction",
+            new CodeActionParams(new TextDocumentIdentifier(Uri), new Protocol.Range(position, position), new CodeActionContext([], null)));
+
+        var action = Assert.Single(actions);
+        Assert.Equal("Change to 'Content'", action.Title);
+        Assert.Equal(CodeActionKind.QuickFix, action.Kind);
+        Assert.True(action.IsPreferred);
+        var edit = Assert.Single(action.Edit!.Changes[Uri]);
+        Assert.Equal("Content", edit.NewText);
+        Assert.Equal(new Protocol.Range(new Position(3, 12), new Position(3, 19)), edit.Range);
+
+        // Asking only for refactorings returns no quick fixes.
+        var refactors = await client.RequestAsync<CodeAction[]>("textDocument/codeAction",
+            new CodeActionParams(new TextDocumentIdentifier(Uri), new Protocol.Range(position, position), new CodeActionContext([], ["refactor"])));
+        Assert.Empty(refactors);
+    }
+
+    [Fact]
     public async Task Hover_ReturnsMarkdown()
     {
         await using var client = await StartAsync();

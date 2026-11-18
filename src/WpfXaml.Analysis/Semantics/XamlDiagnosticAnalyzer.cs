@@ -25,7 +25,9 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var info = model.GetElementInfo(element);
-            Add(info.Error);
+            Add(info.Error is { Code: DiagnosticCodes.UnknownType or DiagnosticCodes.UnknownNamespacePrefix } typeError
+                ? typeError with { Fixes = [.. typeError.Fixes, .. CodeFixes.ImportNamespace(model, element)] }
+                : info.Error);
             if (info.Kind == ElementKind.Ignored)
             {
                 continue;
@@ -67,7 +69,7 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
     {
         if (member.IsEvent)
         {
-            AnalyzeEventHandler(value, span);
+            AnalyzeEventHandler(member, value, span);
             return;
         }
 
@@ -122,7 +124,7 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
         var origin = resolution.Segments.Count == 0 ? $" (data context from {binding.Source.Origin})" : string.Empty;
         Add(new XamlDiagnostic(DiagnosticCodes.BindingPathNotFound,
             $"'{missing.Segment.Text}' is not a property of '{ownerName}'{origin}.{NameSuggestions.DidYouMean(suggestion)}",
-            missing.Segment.Span, XamlDiagnosticSeverity.Warning));
+            missing.Segment.Span, XamlDiagnosticSeverity.Warning).WithFix(NameSuggestions.RenameFix(suggestion, missing.Segment.Span)));
     }
 
     /// <summary><c>{TemplateBinding X}</c> where the template's TargetType has no property X.</summary>
@@ -143,7 +145,7 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
         var suggestion = NameSuggestions.Closest(name, target.Members.Where(m => !m.IsEvent).Select(m => m.Name));
         Add(new XamlDiagnostic(DiagnosticCodes.TemplateBindingPropertyNotFound,
             $"'{name}' is not a property of the template's TargetType '{target.Name}'.{NameSuggestions.DidYouMean(suggestion)}",
-            argument.Value.Span, XamlDiagnosticSeverity.Warning));
+            argument.Value.Span, XamlDiagnosticSeverity.Warning).WithFix(RenameInValue(suggestion, argument.Value, name)));
     }
 
     private bool IsDeferredContent(XamlElement element) =>
@@ -177,10 +179,19 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
 
         var suggestion = NameSuggestions.Closest(key, resources.AllDefinitions().Select(d => d.Key));
         Add(new XamlDiagnostic(DiagnosticCodes.ResourceNotFound,
-            $"The resource '{key}' was not found.{NameSuggestions.DidYouMean(suggestion)}", argument.Value.Span, XamlDiagnosticSeverity.Warning));
+            $"The resource '{key}' was not found.{NameSuggestions.DidYouMean(suggestion)}", argument.Value.Span, XamlDiagnosticSeverity.Warning)
+            .WithFix(RenameInValue(suggestion, argument.Value, key)));
     }
 
-    private void AnalyzeEventHandler(string value, TextSpan span)
+    /// <summary>A rename fix for a word inside a markup-extension value, located in the raw text (quotes and spaces vary).</summary>
+    private XamlFix? RenameInValue(string? suggestion, MarkupValueSyntax value, string word)
+    {
+        var raw = model.Document.Text.Substring(value.Span.Start, value.Span.Length);
+        var index = raw.IndexOf(word, StringComparison.Ordinal);
+        return index < 0 ? null : NameSuggestions.RenameFix(suggestion, new TextSpan(value.Span.Start + index, word.Length));
+    }
+
+    private void AnalyzeEventHandler(XamlMember member, string value, TextSpan span)
     {
         // Only check against code-behind we can see; without it the handler may live in generated code.
         if (model.ClassSymbol is not { } classSymbol || !classSymbol.HasSourceLocation())
@@ -193,7 +204,8 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
         if (!exists)
         {
             Add(XamlSemanticModel.Error(DiagnosticCodes.EventHandlerNotFound,
-                $"'{classSymbol.Name}' does not contain an event handler named '{handler}'.", span));
+                    $"'{classSymbol.Name}' does not contain an event handler named '{handler}'.", span)
+                .WithFix(CodeFixes.GenerateEventHandler(model, classSymbol, handler, member.ValueType)));
         }
     }
 
@@ -243,7 +255,8 @@ internal sealed class XamlDiagnosticAnalyzer(XamlSemanticModel model)
                 {
                     var suggestion = NameSuggestions.Closest(argument.Name, type.Members.Where(m => !m.IsEvent).Select(m => m.Name));
                     Add(XamlSemanticModel.Error(DiagnosticCodes.UnknownMember,
-                        $"'{argument.Name}' is not a property of '{type.XamlName}'.{NameSuggestions.DidYouMean(suggestion)}", argument.NameSpan!.Value));
+                        $"'{argument.Name}' is not a property of '{type.XamlName}'.{NameSuggestions.DidYouMean(suggestion)}", argument.NameSpan!.Value)
+                        .WithFix(NameSuggestions.RenameFix(suggestion, argument.NameSpan!.Value)));
                 }
                 else if (argument.Value.Extension is null)
                 {
@@ -281,8 +294,12 @@ internal static class ValueChecker
                 if (p.Length > 0 && !long.TryParse(p, out _) && !names.Contains(p, StringComparer.OrdinalIgnoreCase))
                 {
                     var suggestion = NameSuggestions.Closest(p, names);
+
+                    // The fix needs the word's exact position: only when the span holds the value as is (no quotes or entities).
+                    var index = span.Length == value.Length ? value.IndexOf(p, StringComparison.Ordinal) : -1;
                     return XamlSemanticModel.Error(DiagnosticCodes.InvalidValue,
-                        $"'{p}' is not a valid value for '{type.Name}'.{NameSuggestions.DidYouMean(suggestion)}", span);
+                        $"'{p}' is not a valid value for '{type.Name}'.{NameSuggestions.DidYouMean(suggestion)}", span)
+                        .WithFix(index < 0 ? null : NameSuggestions.RenameFix(suggestion, new TextSpan(span.Start + index, p.Length)));
                 }
             }
         }

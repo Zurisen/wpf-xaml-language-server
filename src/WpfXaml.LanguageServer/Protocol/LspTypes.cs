@@ -52,6 +52,8 @@ public sealed record ServerCapabilities
     public bool HoverProvider { get; init; }
 
     public bool DefinitionProvider { get; init; }
+
+    public CodeActionOptions? CodeActionProvider { get; init; }
 }
 
 public sealed record TextDocumentSyncOptions(bool OpenClose, int Change, bool Save);
@@ -110,6 +112,32 @@ public static class CompletionItemKind
 }
 
 public sealed record TextEdit(Range Range, string NewText);
+
+public sealed record CodeActionOptions(string[] CodeActionKinds);
+
+public sealed record CodeActionContext(Diagnostic[]? Diagnostics, string[]? Only);
+
+public sealed record CodeActionParams(TextDocumentIdentifier TextDocument, Range Range, CodeActionContext? Context);
+
+public sealed record WorkspaceEdit(Dictionary<string, TextEdit[]> Changes);
+
+public sealed record CodeAction
+{
+    public required string Title { get; init; }
+
+    public string? Kind { get; init; }
+
+    public Diagnostic[]? Diagnostics { get; init; }
+
+    public bool? IsPreferred { get; init; }
+
+    public WorkspaceEdit? Edit { get; init; }
+}
+
+public static class CodeActionKind
+{
+    public const string QuickFix = "quickfix";
+}
 
 public sealed record MarkupContent(string Kind, string Value)
 {

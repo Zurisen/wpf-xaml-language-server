@@ -10,7 +10,37 @@ public enum XamlDiagnosticSeverity
     Hint,
 }
 
-public sealed record XamlDiagnostic(string Code, string Message, TextSpan Span, XamlDiagnosticSeverity Severity);
+public sealed record XamlDiagnostic(string Code, string Message, TextSpan Span, XamlDiagnosticSeverity Severity)
+{
+    /// <summary>Quick fixes for this diagnostic, offered as code actions.</summary>
+    public IReadOnlyList<XamlFix> Fixes { get; init; } = [];
+
+    public XamlDiagnostic WithFix(XamlFix? fix) => fix is null ? this : this with { Fixes = [.. Fixes, fix] };
+}
+
+/// <summary>A quick fix: a titled set of edits, applied together.</summary>
+/// <param name="IsPreferred">The obvious fix (e.g. the single spelling suggestion), which editors may apply with one key.</param>
+public sealed record XamlFix(string Title, IReadOnlyList<XamlTextEdit> Edits, bool IsPreferred = false)
+{
+    public static XamlFix Replace(string title, TextSpan span, string newText, bool isPreferred = true) =>
+        new(title, [new XamlTextEdit(span, newText)], isPreferred);
+}
+
+/// <summary>
+/// A text edit. <see cref="Span"/> applies to the document being analyzed; for an edit in another file,
+/// <see cref="FilePath"/> is set and <see cref="Start"/>/<see cref="End"/> locate it instead.
+/// </summary>
+public sealed record XamlTextEdit(TextSpan Span, string NewText)
+{
+    public string? FilePath { get; init; }
+
+    public LinePosition Start { get; init; }
+
+    public LinePosition End { get; init; }
+
+    public static XamlTextEdit InFile(string filePath, LinePosition start, LinePosition end, string newText) =>
+        new(default, newText) { FilePath = filePath, Start = start, End = end };
+}
 
 /// <summary>Diagnostic codes. Syntax codes are 0xxx, semantic codes are 1xxx.</summary>
 public static class DiagnosticCodes

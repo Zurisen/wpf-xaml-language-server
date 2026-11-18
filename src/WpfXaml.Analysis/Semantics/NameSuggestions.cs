@@ -1,3 +1,6 @@
+using WpfXaml.Language;
+using WpfXaml.Language.Text;
+
 namespace WpfXaml.Analysis.Semantics;
 
 /// <summary>"Did you mean ...?" suggestions based on edit distance.</summary>
@@ -27,6 +30,10 @@ internal static class NameSuggestions
     }
 
     public static string DidYouMean(string? suggestion) => suggestion is null ? string.Empty : $" Did you mean '{suggestion}'?";
+
+    /// <summary>"Change to 'X'": replaces each span (e.g. the name in a start tag and its end tag) with the suggestion.</summary>
+    public static XamlFix? RenameFix(string? suggestion, params IEnumerable<TextSpan> spans) =>
+        suggestion is null ? null : new XamlFix($"Change to '{suggestion}'", spans.Select(s => new XamlTextEdit(s, suggestion)).ToList(), IsPreferred: true);
 
     /// <summary>Case-insensitive optimal string alignment distance (Levenshtein plus adjacent transpositions).</summary>
     private static int Distance(string a, string b)

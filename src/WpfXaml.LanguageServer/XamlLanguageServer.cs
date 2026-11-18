@@ -104,6 +104,7 @@ public sealed class XamlLanguageServer : IDisposable
                 CompletionProvider = new CompletionOptions(CompletionTriggers, ResolveProvider: true),
                 HoverProvider = true,
                 DefinitionProvider = true,
+                CodeActionProvider = new CodeActionOptions([CodeActionKind.QuickFix]),
             },
             new ServerInfo("wpf-xaml-ls", Version));
     }
@@ -266,6 +267,37 @@ public sealed class XamlLanguageServer : IDisposable
         var lines = document.Syntax.Lines;
         var hover = HoverService.GetHover(document.GetSemanticModel(types, _resources), LspConverters.ToOffset(lines, parameters.Position));
         return hover is null ? null : new Hover(MarkupContent.Markdown(hover.Markdown), LspConverters.ToRange(lines, hover.Span));
+    }
+
+    /// <summary>Quick fixes for the diagnostics under the requested range.</summary>
+    [JsonRpcMethod("textDocument/codeAction", UseSingleObjectParameterDeserialization = true)]
+    public async Task<CodeAction[]> CodeActionAsync(CodeActionParams parameters, CancellationToken cancellationToken)
+    {
+        if (parameters.Context?.Only is { } only && !only.Any(k => k == CodeActionKind.QuickFix || CodeActionKind.QuickFix.StartsWith(k + ".", StringComparison.Ordinal)))
+        {
+            return [];
+        }
+
+        if (_documents.Get(parameters.TextDocument.Uri) is not { } document)
+        {
+            return [];
+        }
+
+        var context = await _projects.GetContextAsync(document.Path, cancellationToken).ConfigureAwait(false);
+        if (context.Types is null || context.Status == XamlFileStatus.ExcludedFromProject)
+        {
+            return [];
+        }
+
+        var lines = document.Syntax.Lines;
+        var span = Language.Text.TextSpan.FromBounds(
+            LspConverters.ToOffset(lines, parameters.Range.Start),
+            Math.Max(LspConverters.ToOffset(lines, parameters.Range.Start), LspConverters.ToOffset(lines, parameters.Range.End)));
+
+        return document.GetSemanticModel(context.Types, _resources)
+            .GetFixableDiagnostics(span, cancellationToken)
+            .SelectMany(diagnostic => diagnostic.Fixes.Select(fix => LspConverters.ToCodeAction(document.Uri, lines, diagnostic, fix)))
+            .ToArray();
     }
 
     [JsonRpcMethod("textDocument/definition", UseSingleObjectParameterDeserialization = true)]
