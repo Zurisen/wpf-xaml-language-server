@@ -13,3 +13,9 @@ TestResults/
 # Some global gitignores exclude these; this repository tracks them.
 !docs/
 !.github/
+
+# VS Code extension
+node_modules/
+editors/vscode/dist/
+editors/vscode/out-test/
+editors/vscode/.vscode-test/

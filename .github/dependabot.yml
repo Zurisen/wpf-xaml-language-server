@@ -8,6 +8,13 @@ updates:
       # Roslyn packages must move together.
       roslyn:
         patterns: ["Microsoft.CodeAnalysis.*"]
+  - package-ecosystem: npm
+    directory: /editors/vscode
+    schedule:
+      interval: weekly
+    ignore:
+      # @types/vscode must not exceed the minimum VS Code version in "engines".
+      - dependency-name: "@types/vscode"
   - package-ecosystem: github-actions
     directory: /
     schedule:

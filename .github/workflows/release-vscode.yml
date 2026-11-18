@@ -1,0 +1,65 @@
+name: Release VS Code extension
+
+# Pushing a tag like vscode-v0.1.0 packages editors/vscode and publishes it to the VS Code Marketplace and Open VSX
+# (each only when its token secret is set), and creates a GitHub release with the .vsix. The tag's version must match
+# editors/vscode/package.json. See docs/releasing.md.
+on:
+  push:
+    tags: ["vscode-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub release
+    # Job-level, so the publish steps' `if:` can see whether each token is configured.
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    defaults:
+      run:
+        working-directory: editors/vscode
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Check the version
+        run: |
+          tag_version="${GITHUB_REF_NAME#vscode-v}"
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "$tag_version" != "$package_version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json version $package_version."
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - name: Package
+        run: npm run package
+
+      - name: Publish to the VS Code Marketplace
+        if: env.VSCE_PAT != ''
+        run: npx vsce publish --packagePath dist/wpf-xaml-ls.vsix
+
+      - name: Publish to Open VSX
+        if: env.OVSX_PAT != ''
+        run: npx --yes ovsx publish dist/wpf-xaml-ls.vsix
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/wpf-xaml-ls.vsix \
+            --title "VS Code extension ${GITHUB_REF_NAME#vscode-v}" \
+            --notes "WPF XAML Language Server for VS Code. Install from the Marketplace or Open VSX, or download the .vsix below (Extensions view → … → Install from VSIX). Requires the wpf-xaml-ls .NET tool."
