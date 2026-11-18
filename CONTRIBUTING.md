@@ -67,4 +67,6 @@ sections before changing what gets reported.
 - CI (Windows and Ubuntu) must pass.
 - Add an entry to [CHANGELOG.md](CHANGELOG.md) under "Unreleased".
 
+Releases are made by the maintainer, as described in [docs/releasing.md](docs/releasing.md).
+
 By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE).

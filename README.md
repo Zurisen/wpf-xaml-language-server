@@ -94,8 +94,16 @@ calibrated against a 117-project commercial WPF solution with 719 XAML files. On
 
 ## Install
 
-Requires the .NET 10 SDK, or the .NET 10 runtime plus the SDK your projects use. Until the first NuGet release,
-build and install from source:
+Requires the .NET 10 SDK, or the .NET 10 runtime plus the SDK your projects use. Install the tool from NuGet
+(releases are prereleases while the project is in alpha):
+
+```bash
+dotnet tool install -g WpfXaml.LanguageServer --prerelease
+```
+
+This puts `wpf-xaml-ls` on your PATH. To update later, run `dotnet tool update -g WpfXaml.LanguageServer --prerelease`.
+
+To use an unreleased version, build and install from source:
 
 ```bash
 dotnet pack src/WpfXaml.LanguageServer -c Release -o artifacts
@@ -104,8 +112,6 @@ dotnet pack src/WpfXaml.LanguageServer -c Release -o artifacts
 ```bash
 dotnet tool install -g --add-source artifacts WpfXaml.LanguageServer --prerelease
 ```
-
-This puts `wpf-xaml-ls` on your PATH.
 
 ## Editors
 
