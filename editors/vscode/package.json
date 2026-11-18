@@ -1,0 +1,109 @@
+{
+  "name": "wpf-xaml-ls",
+  "displayName": "WPF XAML Language Server",
+  "description": "Completion, diagnostics, quick fixes, hover and go to definition for WPF XAML, with your project's types, resources and bindings.",
+  "version": "0.1.0",
+  "publisher": "zurisen",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zurisen/wpf-xaml-language-server",
+    "directory": "editors/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/Zurisen/wpf-xaml-language-server/issues"
+  },
+  "homepage": "https://github.com/Zurisen/wpf-xaml-language-server#readme",
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "wpf",
+    "xaml",
+    "lsp",
+    "language server",
+    "dotnet"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/*.xaml",
+    "onLanguage:xml"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "WPF XAML",
+      "properties": {
+        "wpfXamlLs.serverPath": {
+          "type": "string",
+          "default": "wpf-xaml-ls",
+          "markdownDescription": "Command that starts the language server. The default expects the .NET tool on your PATH: `dotnet tool install -g WpfXaml.LanguageServer --prerelease`."
+        },
+        "wpfXamlLs.solution": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "markdownDescription": "The `.sln`, `.slnx` or `.csproj` to load, relative to the workspace folder. By default the server finds one under the workspace folder."
+        },
+        "wpfXamlLs.loadProjects": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Load projects with MSBuild. When off, only WPF framework types are known."
+        },
+        "wpfXamlLs.frameworkVersion": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "markdownDescription": "Major version of the WPF targeting pack used before a project loads (for example `8`). By default the highest installed version."
+        },
+        "wpfXamlLs.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "markdownDescription": "Log the LSP messages between VS Code and the server, in the **WPF XAML** output channel."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "wpfXamlLs.restart",
+        "title": "Restart Language Server",
+        "category": "WPF XAML"
+      },
+      {
+        "command": "wpfXamlLs.showLog",
+        "title": "Show Log",
+        "category": "WPF XAML"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --outfile=dist/extension.js --minify --sourcemap",
+    "typecheck": "tsc --noEmit",
+    "package": "npm run build && vsce package --no-dependencies --out dist/wpf-xaml-ls.vsix",
+    "build-test": "esbuild test/runTest.ts test/suite.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:@vscode/test-electron --outdir=out-test",
+    "test": "npm run build && npm run build-test && node out-test/runTest.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "@types/vscode": "1.91.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.1.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
+  }
+}

@@ -128,8 +128,12 @@ plugins and works next to lemminx (the XML language server):
 
 ### VS Code
 
-There is no extension yet. Any generic LSP client extension works: point it at the `wpf-xaml-ls` command for
-`*.xaml` files.
+The **WPF XAML Language Server** extension ([editors/vscode](editors/vscode)) starts the server for `.xaml` files and
+exposes its settings. It needs the `wpf-xaml-ls` tool installed (see [Install](#install)).
+
+Until it is on the Marketplace, download the `.vsix` from a `vscode-v*` [release](https://github.com/Zurisen/wpf-xaml-language-server/releases)
+and install it with **Extensions → … → Install from VSIX…**. To build it yourself, run `npm ci` and then
+`npm run package` in `editors/vscode`.
 
 ### AI agents (MCP)
 

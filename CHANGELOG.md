@@ -5,6 +5,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **VS Code extension** (`editors/vscode`, versioned and released separately with `vscode-v*` tags). It starts the
+  server for `.xaml` files, exposes its settings, and is tested end to end in VS Code in CI.
+
 ## [0.1.0-alpha] - first release
 
 ### Added
