@@ -50,6 +50,11 @@ the analysis reusable from other hosts, such as an MCP server for AI agents or a
 - Errors for unknown names include "Did you mean …?" suggestions based on edit distance. These help humans, and they
   help AI agents in particular.
 - Hover and go to definition share one resolver (`XamlTargetResolver`) that answers "what is under the caret".
+- **Quick fixes are part of the diagnostics.** A diagnostic carries its `XamlFix`es, created where the diagnostic
+  is, because that's where the exact spans are known: the local part of a prefixed name, the end tag, a word inside
+  a markup extension. The server's `textDocument/codeAction` only selects the diagnostics under the range and turns
+  their edits into a workspace edit. Edits can target other files, such as a generated event handler in the
+  code-behind.
 
 ### Resources (`WpfXaml.Analysis.Resources`)
 
@@ -185,7 +190,9 @@ example `IsChecked` on a MahApps 2 `ToggleSwitch`, which is `IsOn` now), and sta
   - `RelativeSource={x:Static RelativeSource.Self}`;
   - converters and value-type checks;
   - binding to a `DataTemplateSelector`'s templates.
-- **Code actions.** Generate an event handler, add a missing `xmlns`.
+- **More code actions.** The current fixes are implemented. Next: create a missing resource key or view-model
+  property, and extract a style or resource. Note that a generated event handler is placed using the code-behind as
+  the server last read it from disk, so unsaved edits in the `.cs` buffer can shift its position.
 - **Rename and find references** for `x:Name` and resource keys.
 - **Generated code.** Feed the `x:Name` fields and `InitializeComponent` (normally in `.g.cs`) to the C# side.
 - **Formatting, document symbols, folding.**

@@ -14,12 +14,14 @@ public sealed class XamlTypeSystem
     private readonly Dictionary<string, string> _preferredPrefixes;
     private readonly ConcurrentDictionary<string, NamespaceResolution> _namespaces = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<INamedTypeSymbol, XamlTypeInfo> _types = new(SymbolEqualityComparer.Default);
+    private readonly Lazy<ILookup<string, INamedTypeSymbol>> _typesByName;
 
     private XamlTypeSystem(Compilation compilation, bool isFrameworkOnly, bool hasGeneratedCode)
     {
         Compilation = compilation;
         IsFrameworkOnly = isFrameworkOnly;
         HasGeneratedCode = hasGeneratedCode;
+        _typesByName = new Lazy<ILookup<string, INamedTypeSymbol>>(BuildTypeIndex);
         Known = new WellKnownTypes(compilation);
         (_xmlnsDefinitions, _preferredPrefixes) = ReadXmlnsAttributes();
     }
@@ -46,6 +48,46 @@ public sealed class XamlTypeSystem
         new(compilation, isFrameworkOnly, hasGeneratedCode);
 
     public string? GetPreferredPrefix(string uri) => _preferredPrefixes.GetValueOrDefault(uri);
+
+    /// <summary>The XAML namespace URI an <c>[XmlnsDefinition]</c> maps to this CLR namespace, if any.</summary>
+    public string? FindXmlnsUri(IAssemblySymbol assembly, string clrNamespace) =>
+        _xmlnsDefinitions.FirstOrDefault(d => d.Value.Any(m =>
+            SymbolEqualityComparer.Default.Equals(m.Assembly, assembly) && m.ClrNamespace == clrNamespace)).Key;
+
+    /// <summary>
+    /// Accessible, non-generic, top-level classes and structs with this name in the project and every referenced
+    /// assembly (to suggest the <c>xmlns</c> for a type that isn't imported). The index is built on first use.
+    /// </summary>
+    public IEnumerable<INamedTypeSymbol> FindTypesByName(string name) => _typesByName.Value[name];
+
+    private ILookup<string, INamedTypeSymbol> BuildTypeIndex()
+    {
+        var types = new List<INamedTypeSymbol>();
+        foreach (var assembly in Compilation.SourceModule.ReferencedAssemblySymbols.Prepend(Compilation.Assembly))
+        {
+            var isSource = SymbolEqualityComparer.Default.Equals(assembly, Compilation.Assembly);
+            var stack = new Stack<INamespaceSymbol>([assembly.GlobalNamespace]);
+            while (stack.Count > 0)
+            {
+                var ns = stack.Pop();
+                foreach (var child in ns.GetNamespaceMembers())
+                {
+                    stack.Push(child);
+                }
+
+                foreach (var type in ns.GetTypeMembers())
+                {
+                    if (!type.IsGenericType && type.TypeKind is TypeKind.Class or TypeKind.Struct
+                        && (type.DeclaredAccessibility == Accessibility.Public || (isSource && type.DeclaredAccessibility == Accessibility.Internal)))
+                    {
+                        types.Add(type);
+                    }
+                }
+            }
+        }
+
+        return types.ToLookup(t => t.Name, StringComparer.Ordinal);
+    }
 
     public XamlTypeInfo GetTypeInfo(INamedTypeSymbol symbol) => _types.GetOrAdd(symbol, s => new XamlTypeInfo(this, s));
 

@@ -131,6 +131,16 @@ public class ResourceTests
     }
 
     [Fact]
+    public void MissingKey_FixRenamesTheKey()
+    {
+        var xaml = Window("""<Button Background="{StaticResource AcentBrush}" />""");
+        var edit = Assert.Single(Assert.Single(Assert.Single(ResourceDiagnostics(Model(xaml))).Fixes).Edits);
+
+        Assert.Equal("AccentBrush", edit.NewText);
+        Assert.Equal("AcentBrush", xaml.Substring(edit.Span.Start, edit.Span.Length));
+    }
+
+    [Fact]
     public void DynamicResource_IsNotReported()
     {
         Assert.Empty(ResourceDiagnostics(Model(Window("""<Button Background="{DynamicResource SetFromCode}" />"""))));

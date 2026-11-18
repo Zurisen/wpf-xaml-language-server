@@ -51,6 +51,13 @@ VS Code, Zed, Helix or Emacs, or from CI and AI agents.
   - Warnings for path segments that can't exist. Nothing is reported when the data context is unknown, or when a
     subclass could have the property.
   - `{TemplateBinding}` is checked against the template's `TargetType`.
+- **Quick fixes (code actions):**
+  - every "Did you mean …?" diagnostic fixes with one action: types (start and end tag), properties, attached
+    properties, `x:` directives, markup extensions and their arguments, enum values, resource keys, binding paths
+    and `TemplateBinding` properties;
+  - **generate event handler:** adds a method with the event's signature to the code-behind;
+  - **add `xmlns`:** for an undeclared prefix, or a type found in a project or library namespace that isn't
+    imported (reuses an existing prefix when there is one).
 - **Hover:** signatures and XML documentation for types, properties, attached properties, events, enum values,
   directives, resource keys and binding paths.
 - **Go to definition:** from XAML into C# (project types, properties, event handlers, `x:Class`, `x:Static`
@@ -80,7 +87,7 @@ calibrated against a 117-project commercial WPF solution with 719 XAML files. On
   - non-string resource keys (`{x:Type …}` implicit styles, `ComponentResourceKey`) and theme dictionaries;
   - bindings written as elements (`<Binding/>` inside `MultiBinding`), converters and value types;
   - .NET Framework (non-SDK) projects, which fall back to framework types.
-- **Missing features:** code actions, rename, find references, formatting, document symbols and folding. See the
+- **Missing features:** rename, find references, formatting, document symbols and folding. See the
   [roadmap](docs/architecture.md#known-gaps--next-steps).
 
 ## Install

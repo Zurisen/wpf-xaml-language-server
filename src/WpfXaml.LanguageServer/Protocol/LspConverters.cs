@@ -66,6 +66,28 @@ internal static class LspConverters
         };
     }
 
+    public static CodeAction ToCodeAction(string uri, LineIndex lines, XamlDiagnostic diagnostic, XamlFix fix)
+    {
+        var changes = new Dictionary<string, TextEdit[]>(StringComparer.Ordinal);
+        foreach (var group in fix.Edits.GroupBy(e => e.FilePath))
+        {
+            var target = group.Key is null ? uri : DocumentUris.FromPath(group.Key);
+            changes[target] = group.Select(e => e.FilePath is null
+                    ? new TextEdit(ToRange(lines, e.Span), e.NewText)
+                    : new TextEdit(new Range(ToPosition(e.Start), ToPosition(e.End)), e.NewText))
+                .ToArray();
+        }
+
+        return new CodeAction
+        {
+            Title = fix.Title,
+            Kind = CodeActionKind.QuickFix,
+            Diagnostics = [ToDiagnostic(lines, diagnostic)],
+            IsPreferred = fix.IsPreferred ? true : null,
+            Edit = new WorkspaceEdit(changes),
+        };
+    }
+
     public static Location ToLocation(string currentUri, XamlLocation location)
     {
         var uri = location.FilePath is null ? currentUri : DocumentUris.FromPath(location.FilePath);
