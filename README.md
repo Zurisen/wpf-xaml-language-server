@@ -131,8 +131,9 @@ plugins and works next to lemminx (the XML language server):
 The **WPF XAML Language Server** extension ([editors/vscode](editors/vscode)) starts the server for `.xaml` files and
 exposes its settings. It needs the `wpf-xaml-ls` tool installed (see [Install](#install)).
 
-Until it is on the Marketplace, download the `.vsix` from a `vscode-v*` [release](https://github.com/Zurisen/wpf-xaml-language-server/releases)
-and install it with **Extensions → … → Install from VSIX…**. To build it yourself, run `npm ci` and then
+Install it from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Zurisen.wpf-xaml-ls)
+(search for "WPF XAML Language Server" in the Extensions view), or download the `.vsix` from a `vscode-v*`
+[release](https://github.com/Zurisen/wpf-xaml-language-server/releases) and use **Extensions → … → Install from VSIX…**. To build it yourself, run `npm ci` and then
 `npm run package` in `editors/vscode`.
 
 ### AI agents (MCP)

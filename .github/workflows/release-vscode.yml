@@ -1,8 +1,8 @@
 name: Release VS Code extension
 
-# Pushing a tag like vscode-v0.1.0 packages editors/vscode and publishes it to the VS Code Marketplace and Open VSX
-# (each only when its token secret is set), and creates a GitHub release with the .vsix. The tag's version must match
-# editors/vscode/package.json. See docs/releasing.md.
+# Pushing a tag like vscode-v0.1.0 packages editors/vscode, publishes it to the VS Code Marketplace (trusted
+# publishing, no stored token) and to Open VSX (only when OVSX_PAT is set), and creates a GitHub release with the
+# .vsix. The tag's version must match editors/vscode/package.json. See docs/releasing.md.
 on:
   push:
     tags: ["vscode-v*"]
@@ -15,9 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub release
-    # Job-level, so the publish steps' `if:` can see whether each token is configured.
+      id-token: write # VS Code Marketplace trusted publishing (GitHub OIDC)
+    # Job-level, so the Open VSX step's `if:` can see whether the token is configured.
     env:
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
     defaults:
       run:
@@ -49,8 +49,7 @@ jobs:
         run: npm run package
 
       - name: Publish to the VS Code Marketplace
-        if: env.VSCE_PAT != ''
-        run: npx vsce publish --packagePath dist/wpf-xaml-ls.vsix
+        run: npx vsce publish --packagePath dist/wpf-xaml-ls.vsix --oidc
 
       - name: Publish to Open VSX
         if: env.OVSX_PAT != ''

@@ -38,19 +38,20 @@ Versions with a suffix (`0.1.0-alpha`, `0.2.0-beta.1`) are published as prerelea
 ## VS Code extension
 
 The extension in `editors/vscode` is released separately by
-[.github/workflows/release-vscode.yml](../.github/workflows/release-vscode.yml). The workflow packages the extension
-and creates a GitHub release with the `.vsix`. If a registry's token secret is configured, it also publishes there.
+[.github/workflows/release-vscode.yml](../.github/workflows/release-vscode.yml). The workflow packages the extension,
+publishes it to the VS Code Marketplace, and creates a GitHub release with the `.vsix`. If the Open VSX token is
+configured, it also publishes there.
 
 One-time setup:
 
-1. **VS Code Marketplace:**
-   - Create the publisher `zurisen` (or change `publisher` in `editors/vscode/package.json` to yours) at
-     <https://marketplace.visualstudio.com/manage>.
-   - Create an Azure DevOps personal access token with the **Marketplace (Manage)** scope.
-   - Store it as the repository secret `VSCE_PAT`.
+1. **VS Code Marketplace** (trusted publishing, no stored token):
+   - At <https://marketplace.visualstudio.com/manage>, create the publisher `Zurisen` (or change `publisher` in
+     `editors/vscode/package.json` to yours).
+   - On the publisher's **Trusted Publishing** tab, add a policy for GitHub Actions: owner `Zurisen`, repository
+     `wpf-xaml-language-server`, workflow `release-vscode.yml`. The workflow publishes with `vsce publish --oidc`.
 2. **Open VSX** (used by VSCodium, Cursor and other editors based on VS Code):
    - Create an access token at <https://open-vsx.org>.
-   - Create the namespace once: `npx ovsx create-namespace zurisen -p <token>`.
+   - Create the namespace once: `npx ovsx create-namespace Zurisen -p <token>`.
    - Store the token as `OVSX_PAT`.
 
 To release, set `version` in `editors/vscode/package.json`, add an entry to `editors/vscode/CHANGELOG.md`, merge, then
