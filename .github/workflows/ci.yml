@@ -4,6 +4,9 @@ on:
   push:
     branches: [master]
   pull_request:
+  # Weekly, so vulnerability advisories published for our dependencies show up even without new commits.
+  schedule:
+    - cron: "0 6 * * 1"
 
 # Read-only token: CI never writes to the repository (matters once pull requests come from forks).
 permissions:
@@ -33,6 +36,17 @@ jobs:
 
       - name: Test
         run: dotnet test --solution WpfXamlLs.slnx -c Release --no-build
+
+      # Fails on any known vulnerability in a direct or transitive package (builds only warn, see Directory.Build.props).
+      - name: Check for vulnerable packages
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          dotnet list WpfXamlLs.slnx package --vulnerable --include-transitive | tee vulnerable.txt
+          if grep -q "has the following vulnerable packages" vulnerable.txt; then
+            echo "::error::Vulnerable packages found (see the list above). Update the package that brings them in."
+            exit 1
+          fi
 
       - name: Pack
         if: matrix.os == 'windows-latest'

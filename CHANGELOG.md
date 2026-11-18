@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Builds no longer fail on vulnerability advisories.** Builds failed after a vulnerability advisory for
+  MessagePack 2.5.302 (which comes in through StreamJsonRpc); StreamJsonRpc 2.26.150 brings in the fixed version.
+  NuGet audit warnings no longer fail builds. Instead, CI checks for vulnerable packages, including indirect ones,
+  and runs weekly so new advisories are caught without new commits.
+
 ## [0.1.0-alpha] - first public version
 
 ### Added
