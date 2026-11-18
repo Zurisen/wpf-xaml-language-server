@@ -3,7 +3,9 @@
   "displayName": "WPF XAML Language Server",
   "description": "Completion, diagnostics, quick fixes, hover and go to definition for WPF XAML, with your project's types, resources and bindings.",
   "version": "0.1.0",
-  "publisher": "zurisen",
+  "publisher": "Zurisen",
+  "preview": true,
+  "icon": "images/icon.png",
   "license": "MIT",
   "repository": {
     "type": "git",
