@@ -5,25 +5,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Added
-
-- **Quick fixes** (`textDocument/codeAction`):
-  - one-action fixes for every "Did you mean …?" diagnostic (types in start and end tags, properties, attached
-    properties, directives, markup extensions and arguments, enum values, resource keys, binding paths,
-    `TemplateBinding` properties);
-  - generating a missing event handler in the code-behind;
-  - adding the `xmlns` for an undeclared prefix or an unimported type.
-- **MCP server** (`wpf-xaml-ls mcp`) for AI agents, with five read-only tools: `xaml_check`, `xaml_fix`,
-  `xaml_describe_type`, `xaml_resources` and `xaml_binding_context`.
-
-### Fixed
-
-- **Builds no longer fail on vulnerability advisories.** Builds failed after a vulnerability advisory for
-  MessagePack 2.5.302 (which comes in through StreamJsonRpc); StreamJsonRpc 2.26.150 brings in the fixed version.
-  NuGet audit warnings no longer fail builds. Instead, CI checks for vulnerable packages, including indirect ones,
-  and runs weekly so new advisories are caught without new commits.
-
-## [0.1.0-alpha] - first public version
+## [0.1.0-alpha] - first release
 
 ### Added
 
@@ -49,7 +31,9 @@ All notable changes to this project are documented here. The format follows
 - **Editor features:**
   - completion for elements, attributes, values, markup extensions, resource keys, binding paths and closing tags;
   - hover with XML documentation;
-  - go to definition into C#, other XAML files and binding paths.
+  - go to definition into C#, other XAML files and binding paths;
+  - quick fixes: one-action fixes for every "Did you mean …?" diagnostic, generating a missing event handler in the
+    code-behind, and adding the `xmlns` for an undeclared prefix or an unimported type.
 - **Project system:**
   - MSBuildWorkspace loading;
   - exact XAML ownership from `Page` items, with excluded files getting syntax checks only (`XLS9001`);
@@ -58,4 +42,7 @@ All notable changes to this project are documented here. The format follows
   - a generator-free first compilation for fast first diagnostics.
 - **Tools and editors:**
   - the `wpf-xaml-ls check` command for CI and agents;
-  - Neovim configuration (`editors/nvim`), tested next to lemminx.
+  - an MCP server (`wpf-xaml-ls mcp`) for AI agents, with five read-only tools: `xaml_check`, `xaml_fix`,
+    `xaml_describe_type`, `xaml_resources` and `xaml_binding_context`;
+  - Neovim configuration (`editors/nvim`), tested next to lemminx;
+  - a release workflow publishing the `wpf-xaml-ls` tool to nuget.org.
