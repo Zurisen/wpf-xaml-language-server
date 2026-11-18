@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using WpfXaml.LanguageServer.Protocol;
 
 namespace WpfXaml.LanguageServer.Tests;
@@ -13,9 +12,8 @@ public class ProjectLoadingTests
     [Fact]
     public async Task Samples_LoadOnDemand_UseBuiltReferences_AndRespectExcludedPages()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The samples target net8.0-windows; run on Windows.");
-        var samples = FindSamplesDirectory();
-        await BuildAsync(Path.Combine(samples, "SampleWpfApp"));
+        await SampleProjects.EnsureBuiltAsync();
+        var samples = SampleProjects.Directory;
 
         // Only the library is configured, so the app project must be loaded when its XAML is opened.
         await using var client = await TestClient.StartAsync(new { solution = "SampleWpfLib/SampleWpfLib.csproj" }, samples);
@@ -71,32 +69,4 @@ public class ProjectLoadingTests
 
     private static TextDocumentPositionParams Request(string uri, Position position) =>
         new(new TextDocumentIdentifier(uri), position);
-
-    private static string FindSamplesDirectory()
-    {
-        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
-        {
-            var candidate = Path.Combine(dir.FullName, "samples");
-            if (Directory.Exists(Path.Combine(candidate, "SampleWpfApp")))
-            {
-                return candidate;
-            }
-        }
-
-        throw new DirectoryNotFoundException("samples/SampleWpfApp not found.");
-    }
-
-    /// <summary>MSBuildWorkspace does not restore, and the built-reference path needs the library's DLL.</summary>
-    private static async Task BuildAsync(string projectDir)
-    {
-        using var process = Process.Start(new ProcessStartInfo("dotnet", "build --nologo -v:q")
-        {
-            WorkingDirectory = projectDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        })!;
-        var output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
-        await process.WaitForExitAsync(TestContext.Current.CancellationToken);
-        Assert.True(process.ExitCode == 0, await output);
-    }
 }

@@ -49,6 +49,23 @@ public sealed class XamlTypeSystem
 
     public string? GetPreferredPrefix(string uri) => _preferredPrefixes.GetValueOrDefault(uri);
 
+    /// <summary>
+    /// The namespace URI to import a type with: its <c>[XmlnsDefinition]</c> URI when its assembly declares one,
+    /// otherwise <c>clr-namespace:…</c> (with <c>;assembly=…</c> outside the project).
+    /// </summary>
+    public string GetXmlns(INamedTypeSymbol type)
+    {
+        var clrNamespace = type.ContainingNamespace.IsGlobalNamespace ? string.Empty : type.ContainingNamespace.ToDisplayString();
+        if (FindXmlnsUri(type.ContainingAssembly, clrNamespace) is { } uri)
+        {
+            return uri;
+        }
+
+        return SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, Compilation.Assembly)
+            ? $"{XmlNamespaces.ClrNamespacePrefix}{clrNamespace}"
+            : $"{XmlNamespaces.ClrNamespacePrefix}{clrNamespace};assembly={type.ContainingAssembly.Name}";
+    }
+
     /// <summary>The XAML namespace URI an <c>[XmlnsDefinition]</c> maps to this CLR namespace, if any.</summary>
     public string? FindXmlnsUri(IAssemblySymbol assembly, string clrNamespace) =>
         _xmlnsDefinitions.FirstOrDefault(d => d.Value.Any(m =>

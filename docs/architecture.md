@@ -11,11 +11,25 @@ WpfXaml.Language        Error-tolerant XAML parser and markup-extension parser. 
 WpfXaml.Analysis        Type system over a Roslyn Compilation, semantic model, diagnostics,
    ▲                    completion, hover, go to definition. Editor- and protocol-agnostic.
 WpfXaml.LanguageServer  LSP over stdio (StreamJsonRpc), document store, project system
-                        (MSBuildWorkspace), `check` command. Ships as the `wpf-xaml-ls` dotnet tool.
+                        (MSBuildWorkspace), `check` command, MCP server (`mcp` command).
+                        Ships as the `wpf-xaml-ls` dotnet tool.
 ```
 
 Analysis results use offsets and `TextSpan`s; only the server layer knows about LSP positions and URIs. That keeps
-the analysis reusable from other hosts, such as an MCP server for AI agents or a Roslyn LSP extension.
+the analysis reusable from other hosts. The MCP server is one: it shares the project system and resource host with
+the LSP server.
+
+### MCP server (`Mcp/`)
+
+- `wpf-xaml-ls mcp` runs the official C# MCP SDK over stdio, on the .NET Generic Host. Logging goes to stderr,
+  because stdout carries the protocol.
+- `XamlWorkspace` loads the solution found under the root at startup.
+  - Every tool call waits for project loads to finish, and the full compilation runs with source generators.
+    Agents want accurate answers more than fast ones.
+  - Files are read from disk, or taken from the tool call's `content` argument for text the agent hasn't saved yet.
+- The tools are read-only, and their output is plain text with 1-based positions, the same format as `check`.
+  - `xaml_fix` applies only unambiguous fixes: a single preferred fix whose edits are all in the file itself.
+  - Fixes that need a choice, or that edit other files, are listed rather than applied.
 
 ### Parser (`WpfXaml.Language`)
 

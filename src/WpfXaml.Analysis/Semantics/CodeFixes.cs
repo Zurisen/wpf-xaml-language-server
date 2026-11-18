@@ -91,7 +91,7 @@ internal static class CodeFixes
         var inScope = element.GetNamespacesInScope();
         foreach (var type in model.Types.FindTypesByName(typeName).Take(MaxImportSuggestions))
         {
-            var uri = XmlnsFor(model.Types, type);
+            var uri = model.Types.GetXmlns(type);
             if (name.Prefix is { } undeclared)
             {
                 // <local:Foo> with local undeclared: declare it.
@@ -119,20 +119,6 @@ internal static class CodeFixes
                 : $"Use {prefix}:{typeName}";
             yield return new XamlFix(title, edits);
         }
-    }
-
-    private static string XmlnsFor(XamlTypeSystem types, INamedTypeSymbol type)
-    {
-        var clrNamespace = type.ContainingNamespace.IsGlobalNamespace ? string.Empty : type.ContainingNamespace.ToDisplayString();
-        if (types.FindXmlnsUri(type.ContainingAssembly, clrNamespace) is { } uri)
-        {
-            return uri;
-        }
-
-        var isProject = SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, types.Compilation.Assembly);
-        return isProject
-            ? $"{XmlNamespaces.ClrNamespacePrefix}{clrNamespace}"
-            : $"{XmlNamespaces.ClrNamespacePrefix}{clrNamespace};assembly={type.ContainingAssembly.Name}";
     }
 
     /// <summary><c>[XmlnsPrefix]</c>'s choice, <c>local</c> for the project, or the last namespace segment; made unique.</summary>
