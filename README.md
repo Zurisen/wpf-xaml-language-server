@@ -68,6 +68,8 @@ VS Code, Zed, Helix or Emacs, or from CI and AI agents.
   - A project that isn't in the solution is loaded when you open one of its XAML files.
   - Up-to-date project references are read from their built DLLs, for speed.
 - **`check` command:** prints diagnostics for a whole solution in MSBuild format, for CI or agents.
+- **MCP server for AI agents:** checks, fixes, type descriptions, resources and binding contexts as tools (see
+  [AI agents](#ai-agents-mcp)).
 
 **Diagnostics aim for zero false positives.** Anything the server can't know statically is not reported: a data
 context set in code, a resource dictionary from a NuGet package, a property a subclass might add. The rules are
@@ -122,6 +124,32 @@ plugins and works next to lemminx (the XML language server):
 
 There is no extension yet. Any generic LSP client extension works: point it at the `wpf-xaml-ls` command for
 `*.xaml` files.
+
+### AI agents (MCP)
+
+`wpf-xaml-ls mcp` runs the same analysis as an [MCP](https://modelcontextprotocol.io) server, so coding agents can
+check and understand XAML while they edit it. It loads the solution found under its working directory (or
+`--solution <path>`), and offers five read-only tools:
+
+| Tool | What it answers |
+|---|---|
+| `xaml_check` | Problems in a file (or its unsaved content), a folder or a solution, each with its quick fixes. |
+| `xaml_fix` | The file's content with the obvious fixes applied (it doesn't write the file). |
+| `xaml_describe_type` | How a type is used in XAML: xmlns, content property, settable properties, events, attached properties. |
+| `xaml_resources` | The resource keys available at a position. |
+| `xaml_binding_context` | The data context at a position, and the properties a binding can use there. |
+
+With Claude Code, run this in your solution's folder:
+
+```bash
+claude mcp add wpf-xaml -- wpf-xaml-ls mcp
+```
+
+Other clients use the usual MCP configuration, for example in `.mcp.json`:
+
+```json
+{ "mcpServers": { "wpf-xaml": { "command": "wpf-xaml-ls", "args": ["mcp"] } } }
+```
 
 ### Initialization options
 

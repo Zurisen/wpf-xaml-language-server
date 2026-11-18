@@ -13,6 +13,8 @@ All notable changes to this project are documented here. The format follows
     `TemplateBinding` properties);
   - generating a missing event handler in the code-behind;
   - adding the `xmlns` for an undeclared prefix or an unimported type.
+- **MCP server** (`wpf-xaml-ls mcp`) for AI agents, with five read-only tools: `xaml_check`, `xaml_fix`,
+  `xaml_describe_type`, `xaml_resources` and `xaml_binding_context`.
 
 ### Fixed
 

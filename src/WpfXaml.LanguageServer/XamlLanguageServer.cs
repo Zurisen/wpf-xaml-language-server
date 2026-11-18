@@ -401,8 +401,7 @@ public sealed class XamlLanguageServer : IDisposable
 
     // ------------------------------------------------------------------ plumbing
 
-    private static string Version =>
-        typeof(XamlLanguageServer).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "0.0.0";
+    private static string Version => ServerVersion.Current;
 
     private async Task NotifyAsync(string method, object parameters)
     {
